@@ -20,6 +20,7 @@ from .config import model_config
 from .persona import render_system_prompt, summarize_persona
 from .auto_memory import extract_user_facts, should_attempt_auto_memory
 from .permissions import (
+    access_store,
     format_permission_status,
     is_owner_event,
     owner_required_message,
@@ -126,6 +127,27 @@ def is_help_command(event: MessageEvent) -> bool:
 
 def is_permission_command(event: MessageEvent) -> bool:
     return _is_exact_command(event, {"/owner", "/权限", "权限", "我的权限"})
+
+
+def is_access_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/access"
+        or lowered.startswith("/access ")
+        or text == "/白名单"
+        or text.startswith("/白名单 ")
+        or text.startswith("/白名单：")
+        or text.startswith("/白名单:")
+        or text == "白名单"
+        or text.startswith("白名单 ")
+        or text.startswith("白名单：")
+        or text.startswith("白名单:")
+        or text == "信任名单"
+        or text.startswith("信任名单 ")
+        or text.startswith("信任名单：")
+        or text.startswith("信任名单:")
+    )
 
 
 def is_tools_command(event: MessageEvent) -> bool:
@@ -371,6 +393,50 @@ def parse_memory_query_payload(text: str) -> str:
         if lowered.startswith(prefix.lower()):
             return stripped[len(prefix):].strip(" ：:")
     return ""
+
+
+def parse_access_payload(text: str) -> tuple[str, str, str]:
+    """Parse whitelist management command into action, target id, and note."""
+    stripped = text.strip()
+    lowered = stripped.lower()
+    for prefix in ("/access", "/白名单", "白名单", "信任名单"):
+        if lowered == prefix.lower():
+            return "view", "", ""
+        if lowered.startswith(prefix.lower() + " "):
+            stripped = stripped[len(prefix):].strip()
+            break
+        if stripped.startswith(prefix + "：") or stripped.startswith(prefix + ":"):
+            stripped = stripped[len(prefix) + 1:].strip()
+            break
+    else:
+        return "view", "", ""
+
+    lowered = stripped.lower()
+    actions = {
+        "add_user": ("添加用户", "加用户", "add-user", "add user", "user add"),
+        "remove_user": ("删除用户", "移除用户", "删用户", "remove-user", "del-user", "delete-user"),
+        "add_group": ("添加群", "加群", "add-group", "add group", "group add"),
+        "remove_group": ("删除群", "移除群", "删群", "remove-group", "del-group", "delete-group"),
+        "view": ("查看", "列表", "list", "view", "show"),
+    }
+    for action, prefixes in actions.items():
+        for prefix in prefixes:
+            if lowered == prefix.lower():
+                return action, "", ""
+            if lowered.startswith(prefix.lower() + " "):
+                payload = stripped[len(prefix):].strip()
+                parts = payload.split(maxsplit=1)
+                target = parts[0] if parts else ""
+                note = parts[1] if len(parts) > 1 else ""
+                return action, target, note
+            if stripped.startswith(prefix + "：") or stripped.startswith(prefix + ":"):
+                payload = stripped[len(prefix) + 1:].strip()
+                parts = payload.split(maxsplit=1)
+                target = parts[0] if parts else ""
+                note = parts[1] if len(parts) > 1 else ""
+                return action, target, note
+
+    return "view", "", ""
 
 
 def infer_user_fact(payload: str) -> tuple[str, str]:
@@ -777,6 +843,50 @@ async def handle_permission(
     await send_qq_text(bot, event, format_permission_status(event.user_id))
 
 
+access_cmd = on_message(rule=is_access_command, priority=4, block=True)
+
+
+@access_cmd.handle()
+async def handle_access_policy(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """管理未来自动代聊/高风险工具的信任名单。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "信任名单管理"):
+        return
+    if isinstance(event, GroupMessageEvent):
+        await send_qq_text(bot, event, "信任名单管理请在私聊中使用，避免暴露联系人和群号。")
+        return
+
+    action, target, note = parse_access_payload(get_plain_text(event))
+    if action == "add_user":
+        _, msg = access_store.add_user(target, note=note, added_by=event.user_id)
+        await send_qq_text(bot, event, msg)
+        return
+    if action == "remove_user":
+        _, msg = access_store.remove_user(target)
+        await send_qq_text(bot, event, msg)
+        return
+    if action == "add_group":
+        _, msg = access_store.add_group(target, note=note, added_by=event.user_id)
+        await send_qq_text(bot, event, msg)
+        return
+    if action == "remove_group":
+        _, msg = access_store.remove_group(target)
+        await send_qq_text(bot, event, msg)
+        return
+
+    await send_qq_text(
+        bot,
+        event,
+        access_store.summary(include_ids=True)
+        + "\n用法：/白名单 添加用户 <QQ> [备注]；/白名单 添加群 <群号> [备注]；/白名单 删除用户 <QQ>；/白名单 删除群 <群号>",
+    )
+
+
 memory_toggle_cmd = on_message(rule=is_memory_toggle_command, priority=4, block=True)
 
 
@@ -1020,6 +1130,7 @@ async def handle_help_basic(
         "- /权限：查看当前权限",
         "- /status 或 状态：主人查看运行状态",
         "- /tools 或 工具：查看工具列表",
+        "- /白名单：主人管理未来自动代聊/高风险工具信任名单",
         "- /model：主人查看或切换模型",
         "- /clear：清空当前会话历史；群聊中仅主人可用",
         "- 记住：...：保存你的资料",

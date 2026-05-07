@@ -28,6 +28,7 @@ from src.plugins.claude.safe_tools import (
     search_profile,
 )
 from src.plugins.claude.permissions import (
+    AccessPolicyStore,
     format_permission_status,
     is_owner_user_id,
     owner_required_message,
@@ -193,6 +194,28 @@ async def test_permissions():
     assert "当前身份" in status
     assert "Owner 配置" not in status
     assert "主人权限" in owner_required_message("模型管理") or "仅主人可用" in owner_required_message("模型管理")
+
+    policy_path = Path("data") / f"permissions_test_{RUN_ID}.json"
+    store = AccessPolicyStore(policy_path)
+    try:
+        ok, msg = store.add_user("123456", note="测试用户", added_by="999999")
+        assert ok, msg
+        assert store.is_trusted_user("123456")
+        assert not store.is_trusted_user("654321")
+
+        ok, msg = store.add_group("987654321", note="测试群", added_by="999999")
+        assert ok, msg
+        assert store.is_trusted_group("987654321")
+        assert "123456" in store.summary(include_ids=True)
+
+        ok, msg = store.remove_user("123456")
+        assert ok, msg
+        assert not store.is_trusted_user("123456")
+        ok, msg = store.add_user("abc")
+        assert not ok
+    finally:
+        if policy_path.exists():
+            policy_path.unlink()
 
     print("      通过")
     return True

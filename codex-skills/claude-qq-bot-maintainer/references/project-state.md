@@ -107,6 +107,18 @@
 - Confirmed imports write local distilled summaries and source metadata, not other-party messages.
 - Direct `/风格 导入 <sample>` remains the opt-in path for storing a small raw owner example.
 
+### Stage 6: Permission and Whitelist Base v1
+
+- Expanded `src/plugins/claude/permissions.py` with a local `data/permissions.json` access policy store.
+- Added owner-only, private-chat-only trust-list commands:
+  - `/白名单`
+  - `/白名单 添加用户 <QQ> [备注]`
+  - `/白名单 删除用户 <QQ>`
+  - `/白名单 添加群 <群号> [备注]`
+  - `/白名单 删除群 <群号>`
+- `/权限` reports whether the current user is in the trusted-user list.
+- Trust-list data is a future permission base and does not change ordinary chat behavior yet.
+
 ## Current Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` or `data/sessions/group_<groupQQ>.json`.
@@ -114,6 +126,7 @@
 - Long-term memory: `data/longterm_memory/`.
 - Runtime toggles: `data/runtime_state.json`.
 - Todos: `data/todos.json`.
+- Permission and trust-list policy: `data/permissions.json`.
 - Owner style profile, import inbox, and pending summaries: `data/style_profiles/`.
 - Bot persona: `config/persona.json`.
 
@@ -121,12 +134,20 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
 
 ## Planned Stages
 
+### Stage 5B: Distillation Quality and Evaluation
+
+- Redesign style-profile fields for stronger imitation beyond draft replies.
+- Build evaluation pairs from chat logs: previous message/context plus the owner's real reply.
+- Add `/风格 评估` to compare generated replies against real historical replies.
+- Improve phrase extraction to avoid generic words.
+- Separate global owner style from relationship-specific style.
+
 ### Stage 6: Permission and Contact Whitelist
 
-- Expand beyond the 6A owner-only skeleton.
-- Add confirmation for high-risk actions.
+- Continue from the v1 trust-list base.
+- Add confirmation sessions for high-risk actions.
 - Add private/group permission tiers.
-- Add optional contact/group whitelist for style draft and future automation modes.
+- Connect trust lists to future style draft, auto-reply, and automation modes.
 
 ### Stage 7: Agent Mode Refactor
 

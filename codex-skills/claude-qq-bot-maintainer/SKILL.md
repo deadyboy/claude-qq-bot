@@ -28,6 +28,7 @@ Read `references/project-state.md` when a task asks about project history, roadm
 - Keep `style_profile` separate from `persona` and `user_profile`; do not write imported chat logs into `key_facts.db` unless a future task explicitly designs that migration.
 - Keep style-profile and style-draft commands private-chat only until a later permission/whitelist stage explicitly opens them.
 - Bulk style imports must use `data/style_profiles/import_inbox/`, preview-confirm flow, and summary-only persistence; do not persist other-party messages.
+- Trust-list commands write only `data/permissions.json`; do not change ordinary chat behavior unless a future stage explicitly connects that policy.
 
 ## Standard Workflow
 
@@ -46,6 +47,7 @@ Read `references/project-state.md` when a task asks about project history, roadm
    - `src/plugins/claude/runtime_state.py` for local runtime switches.
    - `src/plugins/claude/safe_tools.py` for low-risk local tools.
    - `src/plugins/claude/style_profile.py` for owner style profiles and draft generation.
+   - `src/plugins/claude/permissions.py` for owner checks and trust-list policy.
 4. Validate before restarting:
    - `python -m compileall -q bot.py src test_quick.py test_memory.py`
    - `python test_quick.py`
@@ -64,6 +66,7 @@ Implemented stable commands include:
 
 - `/status` or `状态`: bot QQ, mode, model, API base, auto-memory state, profile count, latest runtime error header.
 - `/权限` or `/owner`: current user's owner status.
+- `/白名单`: owner-only trust-list management for future auto-reply/high-risk tools.
 - `/tools` or `工具`: current tool list.
 - `记忆开关 开/关`: enable or disable automatic fact extraction.
 - `记住：...`, `忘记：...`, `我的资料`, `记忆查询 关键词`.
