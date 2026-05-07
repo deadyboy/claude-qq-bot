@@ -42,6 +42,7 @@ from .style_profile import (
     generate_style_draft,
     parse_style_command,
     parse_style_draft_payload,
+    parse_style_import_file_payload,
     parse_style_set_payload,
     style_store,
 )
@@ -972,6 +973,25 @@ async def handle_style_command(
         await send_qq_text(bot, event, msg)
         return
 
+    if action == "import_file":
+        path_text, owner_markers = parse_style_import_file_payload(payload)
+        if not path_text or not owner_markers:
+            await send_qq_text(bot, event, "用法：/风格 导入文件 <文件名> 我=<你的昵称或QQ>；文件需放在 data/style_profiles/import_inbox/")
+            return
+        result = style_store.preview_import_file(path_text, owner_markers)
+        await send_qq_text(bot, event, result["message"])
+        return
+
+    if action == "confirm_import":
+        _, msg = style_store.confirm_import(payload)
+        await send_qq_text(bot, event, msg)
+        return
+
+    if action == "distill":
+        _, msg = style_store.distill()
+        await send_qq_text(bot, event, msg)
+        return
+
     if action == "clear_examples":
         if payload.strip().lower() not in {"确认", "confirm"}:
             await send_qq_text(bot, event, "清空风格样本需要确认：/风格 清空样本 确认")
@@ -1010,7 +1030,7 @@ async def handle_help_basic(
         "- 计算：1 + 2 * 3：安全计算",
         "- 待办 添加/列表/完成：管理待办",
         "- 记忆查询 关键词：搜索你的资料",
-        "- /风格 查看/导入/设置：主人维护风格画像",
+        "- /风格 查看/导入/导入文件/设置：主人维护风格画像",
         "- /用我的风格回复：...：主人生成风格草稿",
     ])
     await send_qq_text(bot, event, msg)

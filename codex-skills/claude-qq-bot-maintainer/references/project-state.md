@@ -92,8 +92,20 @@
   - `/用我的风格回复：...`
 - Style drafts are draft-only and do not auto-send as the owner.
 - Style commands are private-chat only in v1 to avoid exposing samples or drafts in groups.
+- Style drafts avoid inventing the owner's current state, location, availability, or completion status.
 - Style samples do not go into `user_profile`, `key_facts.db`, or `config/persona.json`.
-- v1 supports small direct text samples only; bulk file import and distillation are still future work.
+
+### Stage 5: Chat Log Import and Local Distillation v1
+
+- Added `.txt`, `.json`, and `.csv` chat-log parsing for owner style import.
+- Added private owner-only commands:
+  - `/风格 导入文件 <文件名> 我=<你的昵称或QQ>`
+  - `/风格 确认导入 <import_id>`
+  - `/风格 蒸馏`
+- Import files must be placed under `data/style_profiles/import_inbox/`.
+- Bulk import is preview-first; confirmation is required before updating the style profile.
+- Confirmed imports write local distilled summaries and source metadata, not other-party messages.
+- Direct `/风格 导入 <sample>` remains the opt-in path for storing a small raw owner example.
 
 ## Current Storage Model
 
@@ -102,20 +114,12 @@
 - Long-term memory: `data/longterm_memory/`.
 - Runtime toggles: `data/runtime_state.json`.
 - Todos: `data/todos.json`.
-- Owner style profile and samples: `data/style_profiles/`.
+- Owner style profile, import inbox, and pending summaries: `data/style_profiles/`.
 - Bot persona: `config/persona.json`.
 
 There is currently no `bot_<botQQ>` namespace. This is intentional for the current small-account experiment. Add bot namespaces later before running multiple bot QQ accounts against one data directory.
 
 ## Planned Stages
-
-### Stage 5: Chat Log Import and Distillation
-
-- Import `.txt`, `.json`, or `.csv` chat logs.
-- Distinguish owner messages from other-party messages.
-- Extract reply length, tone, emoji habits, common phrasing, topic behavior.
-- Generate editable `style_profile.json`.
-- Avoid saving other-party private facts into user_profile unless explicitly requested.
 
 ### Stage 6: Permission and Contact Whitelist
 

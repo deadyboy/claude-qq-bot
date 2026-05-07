@@ -27,6 +27,7 @@ Read `references/project-state.md` when a task asks about project history, roadm
 - Keep user-scoped commands such as `记住：...`, `忘记：...`, `我的资料`, `待办`, `时间`, `计算`, and `记忆查询` available to ordinary users.
 - Keep `style_profile` separate from `persona` and `user_profile`; do not write imported chat logs into `key_facts.db` unless a future task explicitly designs that migration.
 - Keep style-profile and style-draft commands private-chat only until a later permission/whitelist stage explicitly opens them.
+- Bulk style imports must use `data/style_profiles/import_inbox/`, preview-confirm flow, and summary-only persistence; do not persist other-party messages.
 
 ## Standard Workflow
 
@@ -69,7 +70,7 @@ Implemented stable commands include:
 - `时间`.
 - `计算：1 + 2 * 3`.
 - `待办 添加 ...`, `待办`, `待办 完成 1`.
-- `/风格 查看`, `/风格 设置 ...`, `/风格 导入 ...`, `/风格 清空样本 确认`.
+- `/风格 查看`, `/风格 设置 ...`, `/风格 导入 ...`, `/风格 导入文件 <文件名> 我=<昵称或QQ>`, `/风格 确认导入 <id>`, `/风格 蒸馏`, `/风格 清空样本 确认`.
 - `/用我的风格回复：...` generates an owner-style draft only.
 - `/model`, `/clear`, `/help`.
 

@@ -89,8 +89,22 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
   - `/用我的风格回复：...`
 - Style drafts are explicitly draft-only and are not auto-sent as the owner.
 - Style commands are private-chat only in v1 to avoid exposing samples or drafts in groups.
+- Style drafts now explicitly avoid inventing the owner's current state, location, availability, or completion status.
 - Style samples are not written to `user_profile`, `key_facts.db`, or `config/persona.json`.
-- Stage 4 v1 supports small text samples only; bulk `.txt/.json/.csv` import remains Stage 5.
+- Direct `/风格 导入` remains the small text sample path; bulk `.txt/.json/.csv` import is handled by Stage 5 below.
+
+### Stage 5: Chat Log Import and Local Distillation v1
+
+- Added `.txt`, `.json`, and `.csv` chat-log parsing for owner style import.
+- Added private owner-only commands:
+  - `/风格 导入文件 <文件名> 我=<你的昵称或QQ>`
+  - `/风格 确认导入 <import_id>`
+  - `/风格 蒸馏`
+- Import files must be placed under `data/style_profiles/import_inbox/`; the bot does not read arbitrary filesystem paths from QQ commands.
+- Bulk import is preview-first. The first command returns parsed counts, owner-message counts, skipped-sensitive counts, and an import id.
+- Confirmation writes only local distilled style summary fields: reply length, emoji habit, punctuation habit, common phrases, stats, and source metadata.
+- Other-party messages are not persisted. Bulk-import owner raw lines are not placed into prompt examples by default.
+- Existing direct `/风格 导入 <sample>` remains the opt-in path for storing a small raw owner reply example.
 
 ## Storage Model
 
@@ -99,20 +113,12 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - Long-term memory: `data/longterm_memory/`
 - Runtime toggles: `data/runtime_state.json`
 - Todos: `data/todos.json`
-- Owner style profile and samples: `data/style_profiles/`
+- Owner style profile, import inbox, and pending summaries: `data/style_profiles/`
 - Bot persona: `config/persona.json`
 
 There is intentionally no `bot_<botQQ>` namespace yet. Current priority is testing on the small QQ account. Add namespaces before running multiple bot QQ accounts against the same data directory.
 
 ## Roadmap
-
-### Stage 5: Chat Log Import and Distillation
-
-- Import `.txt`, `.json`, or `.csv` chat logs.
-- Distinguish owner messages from other-party messages.
-- Extract reply length, tone, emoji habits, common phrasing, and topic behavior.
-- Generate editable `style_profile.json`.
-- Avoid saving other-party private facts into `user_profile`.
 
 ### Stage 6: Permission and Contact Whitelist
 

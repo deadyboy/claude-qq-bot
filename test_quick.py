@@ -37,8 +37,10 @@ from src.plugins.claude.style_profile import (
     StyleProfileStore,
     build_style_system_prompt,
     format_style_profile,
+    parse_chat_log_text,
     parse_style_command,
     parse_style_draft_payload,
+    parse_style_import_file_payload,
     parse_style_set_payload,
 )
 
@@ -229,13 +231,58 @@ async def test_style_profile():
         assert parse_style_command("/风格 设置 语气=自然") == ("set", "语气=自然")
         assert parse_style_set_payload("语气=自然") == ("语气", "自然")
         assert parse_style_command("/风格 导入 在的") == ("import", "在的")
+        assert parse_style_command("/风格 导入文件 chat.csv 我=36") == ("import_file", "chat.csv 我=36")
+        assert parse_style_command("/风格 确认导入 test123") == ("confirm_import", "test123")
         assert parse_style_command("/风格 清空样本 确认") == ("clear_examples", "确认")
         assert parse_style_draft_payload("用我的风格回复：在不在") == "在不在"
+        assert parse_style_import_file_payload("chat.csv 我=36,付健") == ("chat.csv", ["36", "付健"])
+
+        txt_records = parse_chat_log_text(
+            "36: 05-08 01:00:11\n在的在的，刚看到\n朋友: 05-08 01:00:12\n你现在忙不忙",
+            ".txt",
+        )
+        assert len(txt_records) == 2
+        assert txt_records[0]["sender"] == "36"
+
+        json_records = parse_chat_log_text(
+            '[{"role":"owner","text":"我看看"}, {"role":"other","text":"你在哪"}]',
+            ".json",
+        )
+        assert json_records[0]["role"] == "owner"
+
+        inbox = store.import_inbox_dir
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "chat.csv").write_text(
+            "sender,text\n"
+            "36,在的在的，刚看到\n"
+            "friend,你现在忙不忙\n"
+            "36,我看看，啥事\n"
+            "36,我的 api key 是 sk-testsecret123456\n",
+            encoding="utf-8",
+        )
+        preview = store.preview_import_file("chat.csv", ["36"])
+        assert preview["ok"], preview["message"]
+        assert preview["message_count"] == 2
+        assert preview["skipped_sensitive"] == 1
+
+        pending_files = list(store.pending_dir.glob("*.json"))
+        assert len(pending_files) == 1
+        pending_text = pending_files[0].read_text(encoding="utf-8")
+        assert "你现在忙不忙" not in pending_text
+        assert "在的在的" not in pending_text
+
+        ok, msg = store.confirm_import(preview["import_id"])
+        assert ok, msg
+        imported_profile = store.load()
+        assert imported_profile["source_imports"]
+        assert imported_profile["stats"]["sample_count"] == 2
+        assert "你现在忙不忙" not in format_style_profile(imported_profile)
 
         prompt = build_style_system_prompt(loaded)
         assert "回复草稿生成器" in prompt
         assert "自然、短句、像我本人" in prompt
         assert "在的在的，刚看到，我来处理。" in prompt
+        assert "不要直接替主人回答" in prompt
     finally:
         store.delete_for_tests()
 
