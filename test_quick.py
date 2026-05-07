@@ -33,12 +33,20 @@ from src.plugins.claude.permissions import (
     owner_required_message,
     parse_owner_ids,
 )
+from src.plugins.claude.style_profile import (
+    StyleProfileStore,
+    build_style_system_prompt,
+    format_style_profile,
+    parse_style_command,
+    parse_style_draft_payload,
+    parse_style_set_payload,
+)
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/6] 测试短期记忆...")
+    print("[1/7] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -60,7 +68,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/6] 测试关键事实...")
+    print("[2/7] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -102,7 +110,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/6] 测试自动记忆规则...")
+    print("[3/7] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -129,7 +137,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/6] 测试低风险工具...")
+    print("[4/7] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -158,6 +166,8 @@ async def test_safe_tools():
         owner_tools = format_tool_list(auto_memory_enabled=True, include_owner_tools=True)
         assert "/model" not in normal_tools
         assert "/model" in owner_tools
+        assert "/风格" not in normal_tools
+        assert "/风格" in owner_tools
     finally:
         store.clear_user(user_id)
         if todo_path.exists():
@@ -168,7 +178,7 @@ async def test_safe_tools():
 
 async def test_permissions():
     """测试 owner 权限辅助函数。"""
-    print("[5/6] 测试权限辅助函数...")
+    print("[5/7] 测试权限辅助函数...")
 
     owner_ids = parse_owner_ids("123, 456；789  100")
     assert owner_ids == {"123", "456", "789", "100"}
@@ -185,9 +195,56 @@ async def test_permissions():
     print("      通过")
     return True
 
+async def test_style_profile():
+    """测试风格画像本地存储和解析。"""
+    print("[6/7] 测试风格画像...")
+
+    store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
+    try:
+        profile = store.load()
+        assert profile["name"] == "default"
+        assert profile["examples"] == []
+
+        ok, msg = store.set_field("语气", "自然、短句、像我本人")
+        assert ok, msg
+        ok, msg = store.set_field("习惯", "短句；少解释；必要时用一点表情")
+        assert ok, msg
+        ok, msg = store.set_field("语气", "sk-testsecret123456")
+        assert not ok
+
+        ok, msg = store.add_example("在的在的，刚看到，我来处理。")
+        assert ok, msg
+        ok, msg = store.add_example("我的 api key 是 sk-testsecret123456")
+        assert not ok
+
+        loaded = store.load()
+        assert loaded["tone"] == "自然、短句、像我本人"
+        assert loaded["habits"] == ["短句", "少解释", "必要时用一点表情"]
+        assert len(loaded["examples"]) == 1
+
+        formatted = format_style_profile(loaded)
+        assert "样本数：1" in formatted
+        assert "在的在的" in formatted
+
+        assert parse_style_command("/风格 设置 语气=自然") == ("set", "语气=自然")
+        assert parse_style_set_payload("语气=自然") == ("语气", "自然")
+        assert parse_style_command("/风格 导入 在的") == ("import", "在的")
+        assert parse_style_command("/风格 清空样本 确认") == ("clear_examples", "确认")
+        assert parse_style_draft_payload("用我的风格回复：在不在") == "在不在"
+
+        prompt = build_style_system_prompt(loaded)
+        assert "回复草稿生成器" in prompt
+        assert "自然、短句、像我本人" in prompt
+        assert "在的在的，刚看到，我来处理。" in prompt
+    finally:
+        store.delete_for_tests()
+
+    print("      通过")
+    return True
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[6/6] 测试统一记忆管理器...")
+    print("[7/7] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -282,6 +339,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("权限辅助", False))
+
+    try:
+        results.append(("风格画像", await test_style_profile()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("风格画像", False))
 
     try:
         results.append(("统一记忆", await test_unified()))

@@ -36,6 +36,15 @@ from .safe_tools import (
     safe_calculate,
     search_profile,
 )
+from .style_profile import (
+    format_style_help,
+    format_style_profile,
+    generate_style_draft,
+    parse_style_command,
+    parse_style_draft_payload,
+    parse_style_set_payload,
+    style_store,
+)
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -181,6 +190,46 @@ def is_memory_query_command(event: MessageEvent) -> bool:
         or text.startswith("记忆查询 ")
         or text.startswith("记忆查询：")
         or text.startswith("记忆查询:")
+    )
+
+
+def is_style_draft_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/style draft"
+        or lowered.startswith("/style draft ")
+        or text == "/用我的风格回复"
+        or text.startswith("/用我的风格回复 ")
+        or text.startswith("/用我的风格回复：")
+        or text.startswith("/用我的风格回复:")
+        or text == "用我的风格回复"
+        or text.startswith("用我的风格回复 ")
+        or text.startswith("用我的风格回复：")
+        or text.startswith("用我的风格回复:")
+        or text == "风格回复"
+        or text.startswith("风格回复 ")
+        or text.startswith("风格回复：")
+        or text.startswith("风格回复:")
+    )
+
+
+def is_style_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    if lowered == "/style draft" or lowered.startswith("/style draft "):
+        return False
+    return (
+        lowered == "/style"
+        or lowered.startswith("/style ")
+        or text == "/风格"
+        or text.startswith("/风格 ")
+        or text.startswith("/风格：")
+        or text.startswith("/风格:")
+        or text == "风格"
+        or text.startswith("风格 ")
+        or text.startswith("风格：")
+        or text.startswith("风格:")
     )
 
 
@@ -852,6 +901,87 @@ async def handle_memory_query(
     )
 
 
+style_draft_cmd = on_message(rule=is_style_draft_command, priority=4, block=True)
+
+
+@style_draft_cmd.handle()
+async def handle_style_draft(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """按 owner 风格生成回复草稿。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "风格草稿"):
+        return
+    if isinstance(event, GroupMessageEvent):
+        await send_qq_text(bot, event, "风格草稿请在私聊中使用，避免把草稿公开到群聊。")
+        return
+
+    payload = parse_style_draft_payload(get_plain_text(event))
+    if not payload:
+        await send_qq_text(bot, event, "用法：/用我的风格回复：<对方消息>")
+        return
+
+    try:
+        draft = await generate_style_draft(payload)
+        response = "草稿：\n" + format_reply(draft)
+        for part in split_qq_msg(response):
+            await send_qq_text(bot, event, part)
+    except Exception as e:
+        write_runtime_error("handle_style_draft", e)
+        await send_qq_text(bot, event, f"风格草稿生成失败：{type(e).__name__}")
+
+
+style_cmd = on_message(rule=is_style_command, priority=4, block=True)
+
+
+@style_cmd.handle()
+async def handle_style_command(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """管理 owner 风格画像。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "风格画像"):
+        return
+    if isinstance(event, GroupMessageEvent):
+        await send_qq_text(bot, event, "风格画像管理请在私聊中使用，避免暴露样本内容。")
+        return
+
+    action, payload = parse_style_command(get_plain_text(event))
+    if action == "view":
+        await send_qq_text(bot, event, format_style_profile(style_store.load()))
+        return
+
+    if action == "set":
+        parsed = parse_style_set_payload(payload)
+        if not parsed:
+            await send_qq_text(bot, event, "用法：/风格 设置 语气=自然、简短、像我本人")
+            return
+        field, value = parsed
+        _, msg = style_store.set_field(field, value)
+        await send_qq_text(bot, event, msg)
+        return
+
+    if action == "import":
+        _, msg = style_store.add_example(payload)
+        await send_qq_text(bot, event, msg)
+        return
+
+    if action == "clear_examples":
+        if payload.strip().lower() not in {"确认", "confirm"}:
+            await send_qq_text(bot, event, "清空风格样本需要确认：/风格 清空样本 确认")
+            return
+        await send_qq_text(bot, event, style_store.clear_examples())
+        return
+
+    await send_qq_text(bot, event, format_style_help())
+
+
 help_cmd = on_message(rule=is_help_command, priority=4, block=True)
 
 
@@ -880,6 +1010,8 @@ async def handle_help_basic(
         "- 计算：1 + 2 * 3：安全计算",
         "- 待办 添加/列表/完成：管理待办",
         "- 记忆查询 关键词：搜索你的资料",
+        "- /风格 查看/导入/设置：主人维护风格画像",
+        "- /用我的风格回复：...：主人生成风格草稿",
     ])
     await send_qq_text(bot, event, msg)
 

@@ -8,6 +8,7 @@
   - `5adf6e0 feat: initialize qq bot with persona memory`
   - `76bcfa8 feat: add automatic user memory extraction`
   - `58c921e feat: add safe tools and bot status commands`
+  - `aaada5d feat: add owner permission checks`
 
 ## Runtime
 
@@ -78,6 +79,22 @@
 - Removed raw QQ-number substring matching from group targeting.
 - Disabled automatic memory extraction in group chats; explicit `记住：...` remains available.
 
+### Stage 4: Style Profile v1
+
+- Added `src/plugins/claude/style_profile.py`.
+- Stores owner style data separately under `data/style_profiles/`.
+- Added owner-only style commands:
+  - `/风格 查看`
+  - `/风格 设置 语气=...`
+  - `/风格 设置 习惯=...`
+  - `/风格 导入 <sample>`
+  - `/风格 清空样本 确认`
+  - `/用我的风格回复：...`
+- Style drafts are draft-only and do not auto-send as the owner.
+- Style commands are private-chat only in v1 to avoid exposing samples or drafts in groups.
+- Style samples do not go into `user_profile`, `key_facts.db`, or `config/persona.json`.
+- v1 supports small direct text samples only; bulk file import and distillation are still future work.
+
 ## Current Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` or `data/sessions/group_<groupQQ>.json`.
@@ -85,23 +102,12 @@
 - Long-term memory: `data/longterm_memory/`.
 - Runtime toggles: `data/runtime_state.json`.
 - Todos: `data/todos.json`.
+- Owner style profile and samples: `data/style_profiles/`.
 - Bot persona: `config/persona.json`.
 
 There is currently no `bot_<botQQ>` namespace. This is intentional for the current small-account experiment. Add bot namespaces later before running multiple bot QQ accounts against one data directory.
 
 ## Planned Stages
-
-### Stage 4: Style Profile v1
-
-Goal: create a third system for the owner's speaking style.
-
-Do not mix imported chat logs into current user_profile facts. Treat them as style-training corpus. Start with draft mode:
-
-- `data/style_profiles/`
-- `/风格 导入`
-- `/风格 查看`
-- `/用我的风格回复：...`
-- Output reply drafts only; do not auto-send as the owner.
 
 ### Stage 5: Chat Log Import and Distillation
 

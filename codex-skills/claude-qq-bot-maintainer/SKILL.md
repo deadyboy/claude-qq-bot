@@ -23,8 +23,10 @@ Read `references/project-state.md` when a task asks about project history, roadm
 - Preserve the user's logged-in NapCat/QQ session. Restart the bot process only when possible; avoid restarting NapCat unless necessary.
 - In group chats, keep command handlers gated by `should_handle_targeted_event()` so the bot only responds when @ed or replied to.
 - For high-risk tools such as shell/file write/network/bulk memory import, add owner checks and explicit confirmation before execution.
-- Owner-only commands currently include `/status`, `/model`, `记忆开关`, group `/clear`, and legacy Agent Mode `/tasks`.
+- Owner-only commands currently include `/status`, `/model`, `记忆开关`, group `/clear`, style-profile commands, style-draft commands, and legacy Agent Mode `/tasks`.
 - Keep user-scoped commands such as `记住：...`, `忘记：...`, `我的资料`, `待办`, `时间`, `计算`, and `记忆查询` available to ordinary users.
+- Keep `style_profile` separate from `persona` and `user_profile`; do not write imported chat logs into `key_facts.db` unless a future task explicitly designs that migration.
+- Keep style-profile and style-draft commands private-chat only until a later permission/whitelist stage explicitly opens them.
 
 ## Standard Workflow
 
@@ -42,6 +44,7 @@ Read `references/project-state.md` when a task asks about project history, roadm
    - `src/plugins/claude/auto_memory.py` for automatic user fact extraction.
    - `src/plugins/claude/runtime_state.py` for local runtime switches.
    - `src/plugins/claude/safe_tools.py` for low-risk local tools.
+   - `src/plugins/claude/style_profile.py` for owner style profiles and draft generation.
 4. Validate before restarting:
    - `python -m compileall -q bot.py src test_quick.py test_memory.py`
    - `python test_quick.py`
@@ -66,6 +69,8 @@ Implemented stable commands include:
 - `时间`.
 - `计算：1 + 2 * 3`.
 - `待办 添加 ...`, `待办`, `待办 完成 1`.
+- `/风格 查看`, `/风格 设置 ...`, `/风格 导入 ...`, `/风格 清空样本 确认`.
+- `/用我的风格回复：...` generates an owner-style draft only.
 - `/model`, `/clear`, `/help`.
 
 ## Design Direction
@@ -75,7 +80,7 @@ Keep the architecture separated:
 - `persona`: global bot identity and speaking style.
 - `user_profile`: facts about the QQ user currently talking to the bot.
 - `session`: short-term private/group conversation history.
-- `style_profile`: future system for distilling the owner's speaking style from imported chat logs.
+- `style_profile`: owner speaking-style profile and draft generation, stored under `data/style_profiles/`.
 - `safe_tools`: low-risk commands that do not require agentic autonomy.
 - Future `Agent Mode`: refactor later into schema-based tools, permissions, confirmations, and logs.
 

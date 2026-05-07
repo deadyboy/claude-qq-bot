@@ -76,6 +76,22 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - Tightened group targeting by removing raw QQ-number substring matching.
 - Disabled automatic memory extraction in group chats; group users can still use explicit `记住：...`.
 
+### Stage 4: Style Profile v1
+
+- Added `src/plugins/claude/style_profile.py`.
+- Added an independent owner style-profile store under `data/style_profiles/`.
+- Added owner-only commands:
+  - `/风格 查看`
+  - `/风格 设置 语气=...`
+  - `/风格 设置 习惯=...`
+  - `/风格 导入 <一小段主人回复样本>`
+  - `/风格 清空样本 确认`
+  - `/用我的风格回复：...`
+- Style drafts are explicitly draft-only and are not auto-sent as the owner.
+- Style commands are private-chat only in v1 to avoid exposing samples or drafts in groups.
+- Style samples are not written to `user_profile`, `key_facts.db`, or `config/persona.json`.
+- Stage 4 v1 supports small text samples only; bulk `.txt/.json/.csv` import remains Stage 5.
+
 ## Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` and `data/sessions/group_<groupQQ>.json`
@@ -83,23 +99,12 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - Long-term memory: `data/longterm_memory/`
 - Runtime toggles: `data/runtime_state.json`
 - Todos: `data/todos.json`
+- Owner style profile and samples: `data/style_profiles/`
 - Bot persona: `config/persona.json`
 
 There is intentionally no `bot_<botQQ>` namespace yet. Current priority is testing on the small QQ account. Add namespaces before running multiple bot QQ accounts against the same data directory.
 
 ## Roadmap
-
-### Stage 4: Style Profile v1
-
-Build a separate `style_profile` system for the owner's speaking style. Do not mix imported chat logs into ordinary user profiles.
-
-Initial commands should be draft-first:
-
-- `/风格 导入`
-- `/风格 查看`
-- `/用我的风格回复：...`
-
-Store outputs under `data/style_profiles/`. The bot should generate reply drafts, not auto-send as the owner.
 
 ### Stage 5: Chat Log Import and Distillation
 
