@@ -244,6 +244,20 @@ async def test_style_profile():
         assert len(txt_records) == 2
         assert txt_records[0]["sender"] == "36"
 
+        qq_export_records = parse_chat_log_text(
+            "消息记录（此消息记录为文本格式，不支持重新导入）\n"
+            "消息分组:最近联系人\n"
+            "消息对象:36\n"
+            "2023-11-29 19:25:07 36\n"
+            "在的在的，刚看到\n"
+            "2023-11-29 19:26:07 朋友\n"
+            "你现在忙不忙\n",
+            ".txt",
+        )
+        assert len(qq_export_records) == 2
+        assert qq_export_records[0]["sender"] == "36"
+        assert qq_export_records[0]["text"] == "在的在的，刚看到"
+
         json_records = parse_chat_log_text(
             '[{"role":"owner","text":"我看看"}, {"role":"other","text":"你在哪"}]',
             ".json",

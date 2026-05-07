@@ -21,7 +21,7 @@ DEFAULT_PROFILE_NAME = "default"
 MAX_STYLE_SAMPLE_LENGTH = 1200
 MAX_STYLE_SAMPLES = 12
 MAX_IMPORT_FILE_BYTES = 2 * 1024 * 1024
-MAX_IMPORTED_MESSAGES = 500
+MAX_IMPORTED_MESSAGES = 20000
 SUPPORTED_IMPORT_EXTENSIONS = {".txt", ".json", ".csv"}
 
 DEFAULT_STYLE_PROFILE: Dict[str, Any] = {
@@ -71,11 +71,16 @@ CSV_TEXT_COLUMNS = ("text", "message", "content", "msg", "raw_message")
 CSV_ROLE_COLUMNS = ("role", "type")
 
 OWNER_ROLES = {"owner", "me", "self", "mine", "我", "本人", "主人"}
+QQ_TEXT_EXPORT_HEADER_RE = re.compile(
+    r"^\s*(?P<time>\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2})\s+"
+    r"(?P<sender>.+?)\s*$"
+)
 TEXT_HEADER_RE = re.compile(
     r"^\s*(?P<sender>[^:\n：]{1,80})\s*[:：]\s*"
     r"(?P<time>(?:\d{2,4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}|\d{1,2}:\d{2}).*)$"
 )
 INLINE_MESSAGE_RE = re.compile(r"^\s*(?P<sender>[^:\n：]{1,40})\s*[:：]\s*(?P<text>.+)$")
+TXT_METADATA_PREFIXES = ("消息记录", "消息分组:", "消息分组：", "消息对象:", "消息对象：")
 
 
 def _now_iso() -> str:
@@ -291,6 +296,14 @@ def _iter_txt_records(text: str) -> List[Dict[str, str]]:
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
+            continue
+        if line.startswith(TXT_METADATA_PREFIXES) or set(line) == {"="}:
+            continue
+
+        qq_header_match = QQ_TEXT_EXPORT_HEADER_RE.match(line)
+        if qq_header_match:
+            flush()
+            current_sender = qq_header_match.group("sender").strip()
             continue
 
         header_match = TEXT_HEADER_RE.match(line)
