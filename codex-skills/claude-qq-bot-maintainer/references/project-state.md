@@ -16,6 +16,7 @@
 - Bot reverse WebSocket listener: `127.0.0.1:8081`
 - NapCat config should point reverse WebSocket to `ws://127.0.0.1:8081/onebot/v11/ws`.
 - Prefer restarting only the bot listener, not NapCat, to preserve the QQ login session.
+- Full command guide: `docs/command-guide.md`.
 
 ## Completed Work
 

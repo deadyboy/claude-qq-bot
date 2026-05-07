@@ -162,3 +162,7 @@ A local Codex skill was created for future maintenance:
 `C:\Users\lenovo\.codex\skills\claude-qq-bot-maintainer`
 
 Use it for future tasks involving this QQbot's memory, tools, status commands, style profile, migrations, permissions, NapCat connectivity, or staged roadmap.
+
+## Command Guide
+
+Full user-facing command documentation is maintained at `docs/command-guide.md`.

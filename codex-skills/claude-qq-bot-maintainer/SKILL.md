@@ -15,6 +15,8 @@ The bot is a NoneBot2 + OneBot v11 QQ bot connected to NapCat by reverse WebSock
 
 Read `references/project-state.md` when a task asks about project history, roadmap, completed stages, memory/tool architecture, or future stage planning.
 
+Full user-facing command documentation is in `docs/command-guide.md`.
+
 ## Safety Rules
 
 - Never print or commit `.env`, API keys, NapCat tokens, `data/`, logs, or user memory.
