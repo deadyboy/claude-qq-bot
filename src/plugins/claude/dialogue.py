@@ -19,6 +19,18 @@ from .formatter import split_qq_msg, format_reply, sanitize_for_qq_text
 from .config import model_config
 from .persona import render_system_prompt, summarize_persona
 from .auto_memory import extract_user_facts, should_attempt_auto_memory
+from .runtime_state import is_auto_memory_enabled, set_auto_memory_enabled
+from .safe_tools import (
+    TodoStore,
+    format_current_time,
+    format_profile_search_results,
+    format_todo_list,
+    format_tool_list,
+    get_latest_error_header,
+    parse_todo_command,
+    safe_calculate,
+    search_profile,
+)
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -33,6 +45,7 @@ profile_memory_ready = False
 
 REMEMBER_PREFIXES = ("/remember ", "记住：", "记住:", "记住 ")
 FORGET_PREFIXES = ("/forget ", "忘记：", "忘记:", "忘记 ")
+todo_store = TodoStore()
 
 
 def get_session_id(event: MessageEvent) -> str:
@@ -89,11 +102,77 @@ def is_tasks_command(event: MessageEvent) -> bool:
 
 
 def is_status_command(event: MessageEvent) -> bool:
-    return _is_exact_command(event, {"/status"})
+    return _is_exact_command(event, {"/status", "状态", "运行状态"})
 
 
 def is_help_command(event: MessageEvent) -> bool:
     return _is_exact_command(event, {"/help"})
+
+
+def is_tools_command(event: MessageEvent) -> bool:
+    return _is_exact_command(event, {"/tools", "/工具", "工具", "工具列表"})
+
+
+def is_memory_toggle_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    memory_toggle_words = {
+        "开", "开启", "on", "enable", "enabled", "true", "1",
+        "关", "关闭", "off", "disable", "disabled", "false", "0",
+    }
+    return (
+        lowered == "/memory"
+        or (
+            lowered.startswith("/memory ")
+            and lowered.split(maxsplit=1)[1] in memory_toggle_words
+        )
+        or text == "记忆开关"
+        or text.startswith("记忆开关 ")
+        or text.startswith("记忆开关：")
+        or text.startswith("记忆开关:")
+    )
+
+
+def is_time_command(event: MessageEvent) -> bool:
+    return _is_exact_command(event, {"/time", "/时间", "时间", "现在几点"})
+
+
+def is_calc_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered.startswith("/calc ")
+        or lowered.startswith("/calculate ")
+        or text.startswith("计算 ")
+        or text.startswith("计算：")
+        or text.startswith("计算:")
+    )
+
+
+def is_todo_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/todo"
+        or lowered.startswith("/todo ")
+        or text == "待办"
+        or text.startswith("待办 ")
+        or text.startswith("待办：")
+        or text.startswith("待办:")
+        or text.startswith("/待办")
+    )
+
+
+def is_memory_query_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered.startswith("/memory search ")
+        or lowered.startswith("/memory 查询 ")
+        or text.startswith("记忆查询 ")
+        or text.startswith("记忆查询：")
+        or text.startswith("记忆查询:")
+    )
 
 
 def is_remember_command(event: MessageEvent) -> bool:
@@ -123,7 +202,7 @@ def is_forget_command(event: MessageEvent) -> bool:
 def is_profile_command(event: MessageEvent) -> bool:
     return _is_exact_command(
         event,
-        {"/profile", "/memory", "我的资料", "我的记忆", "你记住了什么"}
+        {"/profile", "我的资料", "我的记忆", "你记住了什么"}
     )
 
 
@@ -198,6 +277,34 @@ def parse_forget_payload(text: str) -> str:
     return payload
 
 
+def parse_memory_toggle_payload(text: str) -> str:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    for prefix in ("/memory", "记忆开关"):
+        if lowered.startswith(prefix.lower()):
+            return stripped[len(prefix):].strip(" ：:").lower()
+    return ""
+
+
+def parse_calc_payload(text: str) -> str:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    for prefix in ("/calc", "/calculate", "计算"):
+        if lowered.startswith(prefix.lower()):
+            return stripped[len(prefix):].strip(" ：:")
+    return ""
+
+
+def parse_memory_query_payload(text: str) -> str:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    prefixes = ("/memory search", "/memory 查询", "记忆查询")
+    for prefix in prefixes:
+        if lowered.startswith(prefix.lower()):
+            return stripped[len(prefix):].strip(" ：:")
+    return ""
+
+
 def infer_user_fact(payload: str) -> tuple[str, str]:
     """把显式记忆文本转成简单的用户画像键值。"""
     text = payload.strip().strip("。.!！")
@@ -262,6 +369,9 @@ def profile_context_for_prompt(profile: dict) -> str:
 
 async def auto_remember_user_facts(user_id: str, session_id: str, text: str):
     """后台抽取并保存用户画像，不影响当前回复链路。"""
+    if not is_auto_memory_enabled():
+        return
+
     if not should_attempt_auto_memory(text):
         return
 
@@ -474,6 +584,9 @@ async def handle_clear(
     state: T_State,
 ):
     """处理 /clear 命令"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
     session_id = get_session_id(event)
 
     if AGENT_MODE and agent_engine:
@@ -482,7 +595,7 @@ async def handle_clear(
         from .memory import session_manager as simple_manager
         await simple_manager.clear_session(session_id)
 
-    await bot.send(event, "会话历史已清空")
+    await send_qq_text(bot, event, "会话历史已清空")
 
 
 model_cmd = on_message(rule=is_model_command, priority=4, block=True)
@@ -495,6 +608,9 @@ async def handle_model_switch(
     state: T_State,
 ):
     """处理 /model 命令"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
     text = get_plain_text(event)
 
     parts = text.split()
@@ -503,7 +619,7 @@ async def handle_model_switch(
         api_base = model_config.get_current_api_base()
         available = ", ".join(model_config.list_models())
         msg = f"当前模型：{current}\nAPI Base：{api_base}\n可用模型：{available}\n用法：/model <模型名>"
-        await bot.send(event, msg)
+        await send_qq_text(bot, event, msg)
         return
 
     model_name = parts[1]
@@ -513,7 +629,209 @@ async def handle_model_switch(
             model=model_config.get_current_model(),
             base_url=model_config.get_current_api_base(),
         )
-    await bot.send(event, msg)
+    await send_qq_text(bot, event, msg)
+
+
+# ========== 状态与低风险工具 ==========
+
+status_cmd = on_message(rule=is_status_command, priority=4, block=True)
+
+
+@status_cmd.handle()
+async def handle_basic_status(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """查看基础运行状态。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    await ensure_profile_memory_ready()
+    profile = await profile_memory.get_user_profile(str(event.user_id))
+    session_kind = "群聊" if isinstance(event, GroupMessageEvent) else "私聊"
+    msg = "\n".join([
+        "运行状态：",
+        f"- Bot QQ：{bot.self_id}",
+        f"- 当前场景：{session_kind}",
+        f"- 模式：{'Agent Mode' if AGENT_MODE else '简单稳定模式'}",
+        f"- 模型：{model_config.get_current_model()}",
+        f"- API Base：{model_config.get_current_api_base()}",
+        f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",
+        f"- 你的资料：{len(profile.get('items') or [])} 条",
+        f"- 最近错误：{get_latest_error_header()}",
+    ])
+    await send_qq_text(bot, event, msg)
+
+
+tools_cmd = on_message(rule=is_tools_command, priority=4, block=True)
+
+
+@tools_cmd.handle()
+async def handle_tools(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """列出当前可用工具。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    await send_qq_text(bot, event, format_tool_list(is_auto_memory_enabled()))
+
+
+memory_toggle_cmd = on_message(rule=is_memory_toggle_command, priority=4, block=True)
+
+
+@memory_toggle_cmd.handle()
+async def handle_memory_toggle(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """启用或关闭自动记忆。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    payload = parse_memory_toggle_payload(get_plain_text(event))
+    if not payload:
+        msg = f"自动记忆当前为：{'开' if is_auto_memory_enabled() else '关'}\n用法：记忆开关 开 / 记忆开关 关"
+        await send_qq_text(bot, event, msg)
+        return
+
+    if payload in {"开", "开启", "on", "enable", "enabled", "true", "1"}:
+        set_auto_memory_enabled(True)
+        await send_qq_text(bot, event, "自动记忆已开启。")
+        return
+
+    if payload in {"关", "关闭", "off", "disable", "disabled", "false", "0"}:
+        set_auto_memory_enabled(False)
+        await send_qq_text(bot, event, "自动记忆已关闭。显式“记住：...”仍然可用。")
+        return
+
+    await send_qq_text(bot, event, "用法：记忆开关 开 / 记忆开关 关")
+
+
+time_cmd = on_message(rule=is_time_command, priority=4, block=True)
+
+
+@time_cmd.handle()
+async def handle_time(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """查看本机当前时间。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    await send_qq_text(bot, event, format_current_time())
+
+
+calc_cmd = on_message(rule=is_calc_command, priority=4, block=True)
+
+
+@calc_cmd.handle()
+async def handle_calc(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """执行安全数学计算。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    await send_qq_text(bot, event, safe_calculate(parse_calc_payload(get_plain_text(event))))
+
+
+todo_cmd = on_message(rule=is_todo_command, priority=4, block=True)
+
+
+@todo_cmd.handle()
+async def handle_todo(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """管理当前用户待办。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    user_id = str(event.user_id)
+    action, payload = parse_todo_command(get_plain_text(event))
+
+    try:
+        if action == "add":
+            item = todo_store.add(user_id, payload)
+            await send_qq_text(bot, event, f"已添加待办：{item['content']} ({item['id']})")
+            return
+
+        if action == "done":
+            item = todo_store.complete(user_id, payload)
+            if item:
+                await send_qq_text(bot, event, f"已完成：{item['content']}")
+            else:
+                await send_qq_text(bot, event, "没有找到对应的待办。")
+            return
+
+        items = todo_store.list(user_id)
+        await send_qq_text(bot, event, format_todo_list(items))
+    except Exception as e:
+        await send_qq_text(bot, event, f"待办操作失败：{e}")
+
+
+memory_query_cmd = on_message(rule=is_memory_query_command, priority=4, block=True)
+
+
+@memory_query_cmd.handle()
+async def handle_memory_query(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """搜索当前用户画像。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    query = parse_memory_query_payload(get_plain_text(event))
+    await ensure_profile_memory_ready()
+    profile = await profile_memory.get_user_profile(str(event.user_id))
+    await send_qq_text(
+        bot,
+        event,
+        format_profile_search_results(query, search_profile(profile, query)),
+    )
+
+
+help_cmd = on_message(rule=is_help_command, priority=4, block=True)
+
+
+@help_cmd.handle()
+async def handle_help_basic(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """显示基础帮助。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    msg = "\n".join([
+        "可用命令：",
+        "- /status 或 状态：查看运行状态",
+        "- /tools 或 工具：查看工具列表",
+        "- /model：查看或切换模型",
+        "- /clear：清空当前会话历史",
+        "- 记住：...：保存你的资料",
+        "- 忘记：...：删除你的资料",
+        "- 我的资料：查看你的资料",
+        "- 记忆开关 开/关：控制自动记忆",
+        "- 时间：查看当前时间",
+        "- 计算：1 + 2 * 3：安全计算",
+        "- 待办 添加/列表/完成：管理待办",
+        "- 记忆查询 关键词：搜索你的资料",
+    ])
+    await send_qq_text(bot, event, msg)
 
 
 # ========== 轻量记忆与身份命令 ==========
@@ -635,35 +953,3 @@ if AGENT_MODE:
                 msg += f"{status_icon} [{t['priority']}] {t['title']}\n"
 
             await bot.send(event, msg)
-
-    status_cmd = on_message(rule=is_status_command, priority=4, block=True)
-
-    @status_cmd.handle()
-    async def handle_status(
-        bot: nonebot.adapters.onebot.v11.Bot,
-        event: MessageEvent,
-        state: T_State,
-    ):
-        """查看智能体状态"""
-        if agent_engine:
-            logs = agent_engine.logger.get_recent_logs(limit=5)
-            msg = "最近活动:\n"
-            for log in logs:
-                msg += f"[{log['level']}] {log['message'][:50]}...\n"
-            await bot.send(event, msg)
-
-    help_cmd = on_message(rule=is_help_command, priority=4, block=True)
-
-    @help_cmd.handle()
-    async def handle_help(
-        bot: nonebot.adapters.onebot.v11.Bot,
-        event: MessageEvent,
-        state: T_State,
-    ):
-        """查看智能体帮助"""
-        await bot.send(event, """可用命令:
-/clear - 清空会话
-/model - 查看或切换模型
-/tasks - 查看任务列表
-/status - 查看状态
-/help - 显示帮助""")

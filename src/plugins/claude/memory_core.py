@@ -511,7 +511,7 @@ class KeyFactManager:
             query += " AND subject = ?"
             params.append(subject)
         if verified_only:
-            query += " AND verified = 1"
+            query += " AND verified = ?"
             params.append(1)
 
         query += " ORDER BY created_at DESC"
@@ -793,7 +793,7 @@ class UnifiedMemoryManager:
     async def get_pending_tasks(self, assigned_to: str = "agent") -> List[Dict]:
         """获取待处理任务"""
         return await self.key_facts.get_tasks(
-            status=None,
+            status="pending",
             assigned_to=assigned_to
         )
 

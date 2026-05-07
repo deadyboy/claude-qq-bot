@@ -19,12 +19,19 @@ from src.plugins.claude.auto_memory import (
     normalize_extracted_facts,
     should_attempt_auto_memory,
 )
+from src.plugins.claude.safe_tools import (
+    TodoStore,
+    format_todo_list,
+    parse_todo_command,
+    safe_calculate,
+    search_profile,
+)
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/4] 测试短期记忆...")
+    print("[1/5] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -46,7 +53,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/4] 测试关键事实...")
+    print("[2/5] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -88,7 +95,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/4] 测试自动记忆规则...")
+    print("[3/5] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -113,9 +120,43 @@ async def test_auto_memory_helpers():
     print("      通过")
     return True
 
+async def test_safe_tools():
+    """测试低风险工具。"""
+    print("[4/5] 测试低风险工具...")
+
+    assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
+    assert safe_calculate("2 ** 11").startswith("计算失败")
+    assert safe_calculate("__import__('os')").startswith("计算失败")
+
+    assert parse_todo_command("待办 添加 买牛奶") == ("add", "买牛奶")
+    assert parse_todo_command("待办 完成 1") == ("done", "1")
+    assert parse_todo_command("待办") == ("list", "")
+
+    todo_path = Path("data") / f"todos_test_{RUN_ID}.json"
+    store = TodoStore(todo_path)
+    user_id = f"todo_user_{RUN_ID}"
+    try:
+        item = store.add(user_id, "买牛奶")
+        items = store.list(user_id)
+        assert len(items) == 1
+        assert item["content"] in format_todo_list(items)
+        done = store.complete(user_id, "1")
+        assert done and done["id"] == item["id"]
+        assert store.list(user_id) == []
+
+        profile = {"items": [{"predicate": "偏好", "object": "喜欢详细步骤"}]}
+        assert len(search_profile(profile, "详细")) == 1
+    finally:
+        store.clear_user(user_id)
+        if todo_path.exists():
+            todo_path.unlink()
+
+    print("      通过")
+    return True
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[4/4] 测试统一记忆管理器...")
+    print("[5/5] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -198,6 +239,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("自动记忆规则", False))
+
+    try:
+        results.append(("低风险工具", await test_safe_tools()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("低风险工具", False))
 
     try:
         results.append(("统一记忆", await test_unified()))
