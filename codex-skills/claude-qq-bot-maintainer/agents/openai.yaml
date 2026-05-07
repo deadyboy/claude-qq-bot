@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude QQ Bot Maintainer"
+  short_description: "Maintain and extend the local NoneBot/NapCat QQ bot safely."
+  default_prompt: "Use this skill to inspect, modify, test, commit, and restart the local claude-qq-bot project."
