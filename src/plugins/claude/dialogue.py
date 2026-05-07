@@ -19,6 +19,12 @@ from .formatter import split_qq_msg, format_reply, sanitize_for_qq_text
 from .config import model_config
 from .persona import render_system_prompt, summarize_persona
 from .auto_memory import extract_user_facts, should_attempt_auto_memory
+from .confirmation import (
+    confirmation_store,
+    format_confirmation_request,
+    format_pending_actions,
+    parse_confirmation_payload,
+)
 from .permissions import (
     access_store,
     format_permission_status,
@@ -127,6 +133,40 @@ def is_help_command(event: MessageEvent) -> bool:
 
 def is_permission_command(event: MessageEvent) -> bool:
     return _is_exact_command(event, {"/owner", "/权限", "权限", "我的权限"})
+
+
+def is_confirm_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/confirm"
+        or lowered.startswith("/confirm ")
+        or text == "/确认"
+        or text.startswith("/确认 ")
+        or text.startswith("/确认：")
+        or text.startswith("/确认:")
+        or text == "确认"
+        or text.startswith("确认 ")
+        or text.startswith("确认：")
+        or text.startswith("确认:")
+    )
+
+
+def is_cancel_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/cancel"
+        or lowered.startswith("/cancel ")
+        or text == "/取消"
+        or text.startswith("/取消 ")
+        or text.startswith("/取消：")
+        or text.startswith("/取消:")
+        or text == "取消"
+        or text.startswith("取消 ")
+        or text.startswith("取消：")
+        or text.startswith("取消:")
+    )
 
 
 def is_access_command(event: MessageEvent) -> bool:
@@ -395,6 +435,14 @@ def parse_memory_query_payload(text: str) -> str:
     return ""
 
 
+def parse_confirm_payload(text: str) -> str:
+    return parse_confirmation_payload(text, ("/confirm", "/确认", "确认"))
+
+
+def parse_cancel_payload(text: str) -> str:
+    return parse_confirmation_payload(text, ("/cancel", "/取消", "取消"))
+
+
 def parse_access_payload(text: str) -> tuple[str, str, str]:
     """Parse whitelist management command into action, target id, and note."""
     stripped = text.strip()
@@ -550,6 +598,68 @@ def write_runtime_error(scope: str, error: Exception):
     with (log_dir / "runtime_errors.log").open("a", encoding="utf-8") as f:
         f.write(f"\n--- {scope}: {type(error).__name__}: {error} ---\n")
         f.write(traceback.format_exc())
+
+
+def create_confirmation(
+    event: MessageEvent,
+    action_type: str,
+    summary: str,
+    payload: dict,
+) -> str:
+    """Create a pending action and return a user-facing confirmation prompt."""
+    action = confirmation_store.create(
+        action_type=action_type,
+        created_by=event.user_id,
+        summary=summary,
+        payload=payload,
+    )
+    return format_confirmation_request(action)
+
+
+async def execute_pending_action(action: dict) -> str:
+    """Execute a confirmed pending action."""
+    action_type = action.get("type", "")
+    payload = action.get("payload") or {}
+
+    if action_type == "access_add_user":
+        _, msg = access_store.add_user(
+            payload.get("target_id", ""),
+            note=payload.get("note", ""),
+            added_by=action.get("created_by", ""),
+        )
+        return msg
+
+    if action_type == "access_remove_user":
+        _, msg = access_store.remove_user(payload.get("target_id", ""))
+        return msg
+
+    if action_type == "access_add_group":
+        _, msg = access_store.add_group(
+            payload.get("target_id", ""),
+            note=payload.get("note", ""),
+            added_by=action.get("created_by", ""),
+        )
+        return msg
+
+    if action_type == "access_remove_group":
+        _, msg = access_store.remove_group(payload.get("target_id", ""))
+        return msg
+
+    if action_type == "style_clear_examples":
+        return style_store.clear_examples()
+
+    if action_type == "clear_session":
+        session_id = payload.get("session_id", "")
+        if not session_id:
+            return "清空失败：缺少会话 ID。"
+        if AGENT_MODE and agent_engine:
+            await agent_engine.memory.short_term.clear(session_id)
+        else:
+            from .memory import session_manager as simple_manager
+            await simple_manager.clear_session(session_id)
+        return "会话历史已清空。"
+
+    return f"未知待确认操作：{action_type}"
 
 
 # ========== 简单模式处理器 (向后兼容) ==========
@@ -724,6 +834,18 @@ async def handle_clear(
         return
 
     session_id = get_session_id(event)
+    if isinstance(event, GroupMessageEvent):
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "clear_session",
+                f"清空群聊 {event.group_id} 的会话历史",
+                {"session_id": session_id, "scope": "group", "group_id": event.group_id},
+            ),
+        )
+        return
 
     if AGENT_MODE and agent_engine:
         await agent_engine.memory.short_term.clear(session_id)
@@ -840,7 +962,75 @@ async def handle_permission(
     if not should_handle_targeted_event(event, bot):
         return
 
-    await send_qq_text(bot, event, format_permission_status(event.user_id))
+    group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
+    await send_qq_text(bot, event, format_permission_status(event.user_id, group_id))
+
+
+confirm_cmd = on_message(rule=is_confirm_command, priority=4, block=True)
+
+
+@confirm_cmd.handle()
+async def handle_confirm_action(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """执行待确认操作。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "确认操作"):
+        return
+
+    action_id = parse_confirm_payload(get_plain_text(event))
+    if not action_id:
+        await send_qq_text(
+            bot,
+            event,
+            format_pending_actions(confirmation_store.list_for_actor(event.user_id)),
+        )
+        return
+
+    action, error = confirmation_store.pop_for_actor(action_id, event.user_id)
+    if not action:
+        await send_qq_text(bot, event, error)
+        return
+
+    try:
+        result = await execute_pending_action(action)
+        confirmation_store.log(action, actor_id=event.user_id, status="executed", result=result)
+        await send_qq_text(bot, event, "已执行：\n" + result)
+    except Exception as e:
+        write_runtime_error("handle_confirm_action", e)
+        confirmation_store.log(action, actor_id=event.user_id, status="failed", result=f"{type(e).__name__}: {e}")
+        await send_qq_text(bot, event, f"执行失败：{type(e).__name__}")
+
+
+cancel_cmd = on_message(rule=is_cancel_command, priority=4, block=True)
+
+
+@cancel_cmd.handle()
+async def handle_cancel_action(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """取消待确认操作。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "取消确认操作"):
+        return
+
+    action_id = parse_cancel_payload(get_plain_text(event))
+    if not action_id:
+        await send_qq_text(
+            bot,
+            event,
+            format_pending_actions(confirmation_store.list_for_actor(event.user_id)),
+        )
+        return
+
+    _, msg = confirmation_store.cancel_for_actor(action_id, event.user_id)
+    await send_qq_text(bot, event, msg)
 
 
 access_cmd = on_message(rule=is_access_command, priority=4, block=True)
@@ -863,20 +1053,64 @@ async def handle_access_policy(
 
     action, target, note = parse_access_payload(get_plain_text(event))
     if action == "add_user":
-        _, msg = access_store.add_user(target, note=note, added_by=event.user_id)
-        await send_qq_text(bot, event, msg)
+        if not target:
+            await send_qq_text(bot, event, "用法：/白名单 添加用户 <QQ> [备注]")
+            return
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "access_add_user",
+                f"加入信任用户 {target}",
+                {"target_id": target, "note": note},
+            ),
+        )
         return
     if action == "remove_user":
-        _, msg = access_store.remove_user(target)
-        await send_qq_text(bot, event, msg)
+        if not target:
+            await send_qq_text(bot, event, "用法：/白名单 删除用户 <QQ>")
+            return
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "access_remove_user",
+                f"移除信任用户 {target}",
+                {"target_id": target},
+            ),
+        )
         return
     if action == "add_group":
-        _, msg = access_store.add_group(target, note=note, added_by=event.user_id)
-        await send_qq_text(bot, event, msg)
+        if not target:
+            await send_qq_text(bot, event, "用法：/白名单 添加群 <群号> [备注]")
+            return
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "access_add_group",
+                f"加入信任群 {target}",
+                {"target_id": target, "note": note},
+            ),
+        )
         return
     if action == "remove_group":
-        _, msg = access_store.remove_group(target)
-        await send_qq_text(bot, event, msg)
+        if not target:
+            await send_qq_text(bot, event, "用法：/白名单 删除群 <群号>")
+            return
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "access_remove_group",
+                f"移除信任群 {target}",
+                {"target_id": target},
+            ),
+        )
         return
 
     await send_qq_text(
@@ -1093,7 +1327,17 @@ async def handle_style_command(
         return
 
     if action == "confirm_import":
-        _, msg = style_store.confirm_import(payload)
+        ok, msg = style_store.confirm_import(payload)
+        confirmation_store.log(
+            {
+                "id": payload.strip()[:16],
+                "type": "style_confirm_import",
+                "summary": f"确认导入风格记录 {payload.strip()[:24]}",
+            },
+            actor_id=event.user_id,
+            status="executed" if ok else "failed",
+            result=msg,
+        )
         await send_qq_text(bot, event, msg)
         return
 
@@ -1103,10 +1347,16 @@ async def handle_style_command(
         return
 
     if action == "clear_examples":
-        if payload.strip().lower() not in {"确认", "confirm"}:
-            await send_qq_text(bot, event, "清空风格样本需要确认：/风格 清空样本 确认")
-            return
-        await send_qq_text(bot, event, style_store.clear_examples())
+        await send_qq_text(
+            bot,
+            event,
+            create_confirmation(
+                event,
+                "style_clear_examples",
+                "清空手动风格样本",
+                {},
+            ),
+        )
         return
 
     await send_qq_text(bot, event, format_style_help())
@@ -1130,6 +1380,7 @@ async def handle_help_basic(
         "- /权限：查看当前权限",
         "- /status 或 状态：主人查看运行状态",
         "- /tools 或 工具：查看工具列表",
+        "- /确认 <id> / /取消 <id>：主人执行或取消待确认操作",
         "- /白名单：主人管理未来自动代聊/高风险工具信任名单",
         "- /model：主人查看或切换模型",
         "- /clear：清空当前会话历史；群聊中仅主人可用",

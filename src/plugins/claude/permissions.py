@@ -198,15 +198,34 @@ class AccessPolicyStore:
 access_store = AccessPolicyStore()
 
 
-def format_permission_status(user_id: str | int) -> str:
+def get_permission_level(user_id: str | int, group_id: str | int | None = None) -> str:
+    """Return owner/trusted_user/trusted_group/normal."""
+    if is_owner_user_id(user_id):
+        return "owner"
+    if access_store.is_trusted_user(user_id):
+        return "trusted_user"
+    if group_id is not None and access_store.is_trusted_group(group_id):
+        return "trusted_group"
+    return "normal"
+
+
+def format_permission_status(user_id: str | int, group_id: str | int | None = None) -> str:
     """生成权限状态文本，不暴露完整 owner 列表。"""
-    owner_ids = get_owner_ids()
-    role = "主人" if is_owner_user_id(user_id, owner_ids) else "普通用户"
+    level = get_permission_level(user_id, group_id)
+    role_names = {
+        "owner": "主人",
+        "trusted_user": "信任用户",
+        "trusted_group": "信任群成员",
+        "normal": "普通用户",
+    }
     trusted = "是" if access_store.is_trusted_user(user_id) else "否"
+    group_trusted = "是" if group_id is not None and access_store.is_trusted_group(group_id) else "否"
     return "\n".join([
         "权限状态：",
-        f"- 当前身份：{role}",
+        f"- 当前身份：{role_names.get(level, level)}",
+        f"- 权限等级：{level}",
         f"- 信任用户：{trusted}",
+        f"- 当前群信任：{group_trusted}" if group_id is not None else "- 当前群信任：不适用",
         "- 管理命令需要主人权限。",
     ])
 

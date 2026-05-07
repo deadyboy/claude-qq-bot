@@ -118,6 +118,22 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - `/权限` now shows whether the current user is in the trusted-user list.
 - The trust list is a base for future auto-reply and high-risk tools; it intentionally does not change ordinary chat behavior yet.
 
+### Stage 6B: Confirmation and Audit Base
+
+- Added `src/plugins/claude/confirmation.py`.
+- Added owner-only confirmation commands:
+  - `/确认`
+  - `/确认 <id>`
+  - `/取消`
+  - `/取消 <id>`
+- Pending actions are stored under `data/pending_actions.json` and expire after 10 minutes.
+- Action audit logs are appended to `data/action_logs.jsonl`.
+- High-risk actions now use pending confirmation:
+  - group `/clear`
+  - `/白名单 添加用户/删除用户/添加群/删除群`
+  - `/风格 清空样本`
+- `/权限` now includes a permission level: `owner`, `trusted_user`, `trusted_group`, or `normal`.
+
 ## Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` and `data/sessions/group_<groupQQ>.json`
@@ -126,6 +142,7 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - Runtime toggles: `data/runtime_state.json`
 - Todos: `data/todos.json`
 - Permission and trust-list policy: `data/permissions.json`
+- Pending confirmations and audit logs: `data/pending_actions.json`, `data/action_logs.jsonl`
 - Owner style profile, import inbox, and pending summaries: `data/style_profiles/`
 - Bot persona: `config/persona.json`
 
@@ -144,10 +161,8 @@ There is intentionally no `bot_<botQQ>` namespace yet. Current priority is testi
 
 ### Stage 6: Permission and Contact Whitelist
 
-- Continue from the v1 trust-list base.
-- Add confirmation sessions for high-risk actions.
-- Add private/group permission tiers.
-- Connect the trust list to future style draft, auto-reply, and automation modes.
+- Connect the trust list and permission levels to future style draft, auto-reply, and automation modes.
+- Add richer confirmation metadata for future file/network/shell tools.
 
 ### Stage 7: Agent Mode Refactor
 

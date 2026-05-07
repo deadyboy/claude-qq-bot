@@ -19,6 +19,10 @@ from src.plugins.claude.auto_memory import (
     normalize_extracted_facts,
     should_attempt_auto_memory,
 )
+from src.plugins.claude.confirmation import (
+    ConfirmationStore,
+    format_pending_actions,
+)
 from src.plugins.claude.safe_tools import (
     TodoStore,
     format_tool_list,
@@ -30,6 +34,7 @@ from src.plugins.claude.safe_tools import (
 from src.plugins.claude.permissions import (
     AccessPolicyStore,
     format_permission_status,
+    get_permission_level,
     is_owner_user_id,
     owner_required_message,
     parse_owner_ids,
@@ -192,6 +197,7 @@ async def test_permissions():
     status = format_permission_status("999")
     assert "权限状态" in status
     assert "当前身份" in status
+    assert "权限等级" in status
     assert "Owner 配置" not in status
     assert "主人权限" in owner_required_message("模型管理") or "仅主人可用" in owner_required_message("模型管理")
 
@@ -216,6 +222,31 @@ async def test_permissions():
     finally:
         if policy_path.exists():
             policy_path.unlink()
+
+    pending_path = Path("data") / f"pending_actions_test_{RUN_ID}.json"
+    log_path = Path("data") / f"action_logs_test_{RUN_ID}.jsonl"
+    confirm_store = ConfirmationStore(pending_path, log_path, ttl_seconds=60)
+    try:
+        action = confirm_store.create(
+            "access_add_user",
+            created_by="999999",
+            summary="加入信任用户 123456",
+            payload={"target_id": "123456", "note": "测试"},
+        )
+        assert action["id"] in format_pending_actions(confirm_store.list_for_actor("999999"))
+        popped, error = confirm_store.pop_for_actor(action["id"], "999999")
+        assert popped and not error
+        confirm_store.log(popped, actor_id="999999", status="executed", result="ok")
+        assert log_path.exists()
+
+        action = confirm_store.create("style_clear_examples", "999999", "清空手动风格样本", {})
+        ok, msg = confirm_store.cancel_for_actor(action["id"], "999999")
+        assert ok and "已取消" in msg
+        assert confirm_store.list_for_actor("999999") == []
+    finally:
+        confirm_store.clear_for_tests()
+
+    assert get_permission_level("nope") == "normal"
 
     print("      通过")
     return True
