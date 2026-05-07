@@ -13,12 +13,18 @@ from src.plugins.claude.memory_core import (
     KeyFactManager,
     UnifiedMemoryManager
 )
+from src.plugins.claude.auto_memory import (
+    contains_sensitive_content,
+    heuristic_extract_facts,
+    normalize_extracted_facts,
+    should_attempt_auto_memory,
+)
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/3] 测试短期记忆...")
+    print("[1/4] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -40,7 +46,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/3] 测试关键事实...")
+    print("[2/4] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -80,9 +86,36 @@ async def test_key_facts():
     print("      通过")
     return True
 
+async def test_auto_memory_helpers():
+    """测试自动记忆抽取的本地规则与过滤。"""
+    print("[3/4] 测试自动记忆规则...")
+
+    assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
+    assert not should_attempt_auto_memory("今天天气怎么样？")
+    assert contains_sensitive_content("我的 API key 是 sk-testsecret123456")
+    assert not should_attempt_auto_memory("我的 API key 是 sk-testsecret123456")
+
+    facts = heuristic_extract_facts("我叫付健，我喜欢简洁直接的回答")
+    print(f"      规则抽取：{facts}")
+    assert {"predicate": "称呼", "object": "付健", "confidence": 0.9} in facts
+    assert any(f["predicate"] == "偏好" for f in facts)
+
+    normalized = normalize_extracted_facts([
+        {"predicate": "偏好", "object": "喜欢详细步骤", "confidence": 0.9},
+        {"predicate": "临时", "object": "因为刚才没看到窗口", "confidence": 0.9},
+        {"predicate": "密钥", "object": "sk-testsecret123456", "confidence": 0.99},
+        {"predicate": "低置信", "object": "可能喜欢 Java", "confidence": 0.4},
+    ])
+    print(f"      清洗结果：{normalized}")
+    assert len(normalized) == 1
+    assert normalized[0]["predicate"] == "偏好"
+
+    print("      通过")
+    return True
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[3/3] 测试统一记忆管理器...")
+    print("[4/4] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -159,6 +192,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("关键事实", False))
+
+    try:
+        results.append(("自动记忆规则", await test_auto_memory_helpers()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("自动记忆规则", False))
 
     try:
         results.append(("统一记忆", await test_unified()))

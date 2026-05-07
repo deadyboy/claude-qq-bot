@@ -18,6 +18,7 @@ from .memory_core import UnifiedMemoryManager, memory_manager as profile_memory
 from .formatter import split_qq_msg, format_reply, sanitize_for_qq_text
 from .config import model_config
 from .persona import render_system_prompt, summarize_persona
+from .auto_memory import extract_user_facts, should_attempt_auto_memory
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -259,6 +260,33 @@ def profile_context_for_prompt(profile: dict) -> str:
     return "\n".join(lines)
 
 
+async def auto_remember_user_facts(user_id: str, session_id: str, text: str):
+    """后台抽取并保存用户画像，不影响当前回复链路。"""
+    if not should_attempt_auto_memory(text):
+        return
+
+    try:
+        facts = await extract_user_facts(text)
+        if not facts:
+            return
+
+        await ensure_profile_memory_ready()
+        for fact in facts:
+            await profile_memory.remember_about_user(
+                user_id,
+                fact["predicate"],
+                fact["object"],
+                verified=False,
+                confidence=fact.get("confidence", 0.8),
+                metadata={
+                    "source": "auto_extract",
+                    "session_id": session_id,
+                },
+            )
+    except Exception as e:
+        write_runtime_error("auto_remember_user_facts", e)
+
+
 async def send_qq_text(bot: nonebot.adapters.onebot.v11.Bot, event: MessageEvent, text: str):
     """发送 QQ 文本；失败时降级为更保守的纯文本再试一次。"""
     try:
@@ -350,6 +378,8 @@ async def handle_simple_chat(
 
         # 添加 AI 回复
         await simple_session_manager.add_message(session_id, "assistant", response)
+        if text and not images:
+            asyncio.create_task(auto_remember_user_facts(user_id, session_id, text))
 
     except Exception as e:
         write_runtime_error("handle_simple_chat", e)

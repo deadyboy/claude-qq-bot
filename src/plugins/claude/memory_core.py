@@ -828,14 +828,18 @@ class UnifiedMemoryManager:
         user_id: str,
         predicate: str,
         object: str,
-        verified: bool = False
+        verified: bool = False,
+        confidence: float = 1.0,
+        metadata: Dict = None
     ) -> str:
         """记住关于用户的事实"""
         fact_id = await self.key_facts.add_fact(
             predicate=predicate,
             object=object,
             fact_type="user_profile",
-            subject=user_id
+            subject=user_id,
+            confidence=confidence,
+            metadata=metadata
         )
 
         if verified:
