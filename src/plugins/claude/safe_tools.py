@@ -12,13 +12,18 @@ from typing import Any, Dict, List, Optional
 
 
 SAFE_TOOL_DESCRIPTIONS = [
-    ("状态", "/status 或 状态", "查看模型、记忆开关、bot 账号和最近错误。"),
-    ("记忆开关", "记忆开关 开/关", "启用或关闭自动事实抽取。"),
+    ("权限", "/权限", "查看当前用户是否为主人。"),
     ("时间", "/time 或 时间", "查看本机当前时间。"),
     ("计算", "计算：1 + 2 * 3", "执行安全四则运算。"),
     ("待办", "待办 添加 买牛奶", "管理当前 QQ 用户自己的待办。"),
     ("记忆查询", "记忆查询 关键词", "搜索当前用户画像里已保存的资料。"),
     ("资料", "我的资料", "查看当前用户画像。"),
+]
+OWNER_TOOL_DESCRIPTIONS = [
+    ("状态", "/status 或 状态", "查看模型、记忆开关、bot 账号和最近错误。"),
+    ("记忆开关", "记忆开关 开/关", "启用或关闭自动事实抽取。"),
+    ("模型", "/model", "查看或切换模型。"),
+    ("群聊清空", "/clear", "清空当前群聊会话历史。"),
 ]
 
 ALLOWED_BIN_OPS = {
@@ -38,13 +43,16 @@ MAX_CALC_EXPR_LENGTH = 120
 MAX_ABS_CALC_VALUE = 10 ** 12
 
 
-def format_tool_list(auto_memory_enabled: bool) -> str:
+def format_tool_list(auto_memory_enabled: bool, include_owner_tools: bool = False) -> str:
     """格式化工具列表。"""
     lines = [
         "当前可用工具：",
         f"- 自动记忆：{'开' if auto_memory_enabled else '关'}",
     ]
     lines.extend(f"- {name}：{usage}；{desc}" for name, usage, desc in SAFE_TOOL_DESCRIPTIONS)
+    if include_owner_tools:
+        lines.append("主人管理工具：")
+        lines.extend(f"- {name}：{usage}；{desc}" for name, usage, desc in OWNER_TOOL_DESCRIPTIONS)
     return "\n".join(lines)
 
 

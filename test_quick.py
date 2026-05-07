@@ -21,17 +21,24 @@ from src.plugins.claude.auto_memory import (
 )
 from src.plugins.claude.safe_tools import (
     TodoStore,
+    format_tool_list,
     format_todo_list,
     parse_todo_command,
     safe_calculate,
     search_profile,
+)
+from src.plugins.claude.permissions import (
+    format_permission_status,
+    is_owner_user_id,
+    owner_required_message,
+    parse_owner_ids,
 )
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/5] 测试短期记忆...")
+    print("[1/6] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -53,7 +60,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/5] 测试关键事实...")
+    print("[2/6] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -95,7 +102,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/5] 测试自动记忆规则...")
+    print("[3/6] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -122,7 +129,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/5] 测试低风险工具...")
+    print("[4/6] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -146,6 +153,11 @@ async def test_safe_tools():
 
         profile = {"items": [{"predicate": "偏好", "object": "喜欢详细步骤"}]}
         assert len(search_profile(profile, "详细")) == 1
+
+        normal_tools = format_tool_list(auto_memory_enabled=True, include_owner_tools=False)
+        owner_tools = format_tool_list(auto_memory_enabled=True, include_owner_tools=True)
+        assert "/model" not in normal_tools
+        assert "/model" in owner_tools
     finally:
         store.clear_user(user_id)
         if todo_path.exists():
@@ -154,9 +166,28 @@ async def test_safe_tools():
     print("      通过")
     return True
 
+async def test_permissions():
+    """测试 owner 权限辅助函数。"""
+    print("[5/6] 测试权限辅助函数...")
+
+    owner_ids = parse_owner_ids("123, 456；789  100")
+    assert owner_ids == {"123", "456", "789", "100"}
+    assert is_owner_user_id("123", owner_ids)
+    assert is_owner_user_id(456, owner_ids)
+    assert not is_owner_user_id("999", owner_ids)
+
+    status = format_permission_status("999")
+    assert "权限状态" in status
+    assert "当前身份" in status
+    assert "Owner 配置" not in status
+    assert "主人权限" in owner_required_message("模型管理") or "仅主人可用" in owner_required_message("模型管理")
+
+    print("      通过")
+    return True
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[5/5] 测试统一记忆管理器...")
+    print("[6/6] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -245,6 +276,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("低风险工具", False))
+
+    try:
+        results.append(("权限辅助", await test_permissions()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("权限辅助", False))
 
     try:
         results.append(("统一记忆", await test_unified()))

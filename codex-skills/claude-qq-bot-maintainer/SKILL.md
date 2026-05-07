@@ -23,6 +23,8 @@ Read `references/project-state.md` when a task asks about project history, roadm
 - Preserve the user's logged-in NapCat/QQ session. Restart the bot process only when possible; avoid restarting NapCat unless necessary.
 - In group chats, keep command handlers gated by `should_handle_targeted_event()` so the bot only responds when @ed or replied to.
 - For high-risk tools such as shell/file write/network/bulk memory import, add owner checks and explicit confirmation before execution.
+- Owner-only commands currently include `/status`, `/model`, `记忆开关`, group `/clear`, and legacy Agent Mode `/tasks`.
+- Keep user-scoped commands such as `记住：...`, `忘记：...`, `我的资料`, `待办`, `时间`, `计算`, and `记忆查询` available to ordinary users.
 
 ## Standard Workflow
 
@@ -57,6 +59,7 @@ Read `references/project-state.md` when a task asks about project history, roadm
 Implemented stable commands include:
 
 - `/status` or `状态`: bot QQ, mode, model, API base, auto-memory state, profile count, latest runtime error header.
+- `/权限` or `/owner`: current user's owner status.
 - `/tools` or `工具`: current tool list.
 - `记忆开关 开/关`: enable or disable automatic fact extraction.
 - `记住：...`, `忘记：...`, `我的资料`, `记忆查询 关键词`.

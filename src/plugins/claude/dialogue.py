@@ -19,6 +19,11 @@ from .formatter import split_qq_msg, format_reply, sanitize_for_qq_text
 from .config import model_config
 from .persona import render_system_prompt, summarize_persona
 from .auto_memory import extract_user_facts, should_attempt_auto_memory
+from .permissions import (
+    format_permission_status,
+    is_owner_event,
+    owner_required_message,
+)
 from .runtime_state import is_auto_memory_enabled, set_auto_memory_enabled
 from .safe_tools import (
     TodoStore,
@@ -107,6 +112,10 @@ def is_status_command(event: MessageEvent) -> bool:
 
 def is_help_command(event: MessageEvent) -> bool:
     return _is_exact_command(event, {"/help"})
+
+
+def is_permission_command(event: MessageEvent) -> bool:
+    return _is_exact_command(event, {"/owner", "/权限", "权限", "我的权限"})
 
 
 def is_tools_command(event: MessageEvent) -> bool:
@@ -220,10 +229,6 @@ def is_to_bot(event: MessageEvent, bot: nonebot.adapters.onebot.v11.Bot) -> bool
         return True
 
     self_id = str(bot.self_id)
-    raw_message = getattr(event, "raw_message", "")
-    if self_id in raw_message:
-        return True
-
     return any(
         seg.type == "at" and str(seg.data.get("qq")) == self_id
         for seg in event.message
@@ -240,6 +245,19 @@ def should_handle_targeted_event(
 
     is_reply = event.reply and str(event.reply.user_id) == str(bot.self_id)
     return is_to_bot(event, bot) or is_reply
+
+
+async def require_owner(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    action: str,
+) -> bool:
+    """要求当前用户是 owner。"""
+    if is_owner_event(event):
+        return True
+
+    await send_qq_text(bot, event, owner_required_message(action))
+    return False
 
 
 async def ensure_profile_memory_ready():
@@ -488,7 +506,7 @@ async def handle_simple_chat(
 
         # 添加 AI 回复
         await simple_session_manager.add_message(session_id, "assistant", response)
-        if text and not images:
+        if text and not images and not isinstance(event, GroupMessageEvent):
             asyncio.create_task(auto_remember_user_facts(user_id, session_id, text))
 
     except Exception as e:
@@ -586,6 +604,8 @@ async def handle_clear(
     """处理 /clear 命令"""
     if not should_handle_targeted_event(event, bot):
         return
+    if isinstance(event, GroupMessageEvent) and not await require_owner(bot, event, "群聊清空历史"):
+        return
 
     session_id = get_session_id(event)
 
@@ -609,6 +629,8 @@ async def handle_model_switch(
 ):
     """处理 /model 命令"""
     if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "模型管理"):
         return
 
     text = get_plain_text(event)
@@ -646,6 +668,8 @@ async def handle_basic_status(
     """查看基础运行状态。"""
     if not should_handle_targeted_event(event, bot):
         return
+    if not await require_owner(bot, event, "运行状态"):
+        return
 
     await ensure_profile_memory_ready()
     profile = await profile_memory.get_user_profile(str(event.user_id))
@@ -677,7 +701,30 @@ async def handle_tools(
     if not should_handle_targeted_event(event, bot):
         return
 
-    await send_qq_text(bot, event, format_tool_list(is_auto_memory_enabled()))
+    await send_qq_text(
+        bot,
+        event,
+        format_tool_list(
+            is_auto_memory_enabled(),
+            include_owner_tools=is_owner_event(event),
+        ),
+    )
+
+
+permission_cmd = on_message(rule=is_permission_command, priority=4, block=True)
+
+
+@permission_cmd.handle()
+async def handle_permission(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """查看当前用户权限。"""
+    if not should_handle_targeted_event(event, bot):
+        return
+
+    await send_qq_text(bot, event, format_permission_status(event.user_id))
 
 
 memory_toggle_cmd = on_message(rule=is_memory_toggle_command, priority=4, block=True)
@@ -691,6 +738,8 @@ async def handle_memory_toggle(
 ):
     """启用或关闭自动记忆。"""
     if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "记忆开关"):
         return
 
     payload = parse_memory_toggle_payload(get_plain_text(event))
@@ -818,14 +867,15 @@ async def handle_help_basic(
 
     msg = "\n".join([
         "可用命令：",
-        "- /status 或 状态：查看运行状态",
+        "- /权限：查看当前权限",
+        "- /status 或 状态：主人查看运行状态",
         "- /tools 或 工具：查看工具列表",
-        "- /model：查看或切换模型",
-        "- /clear：清空当前会话历史",
+        "- /model：主人查看或切换模型",
+        "- /clear：清空当前会话历史；群聊中仅主人可用",
         "- 记住：...：保存你的资料",
         "- 忘记：...：删除你的资料",
         "- 我的资料：查看你的资料",
-        "- 记忆开关 开/关：控制自动记忆",
+        "- 记忆开关 开/关：主人控制自动记忆",
         "- 时间：查看当前时间",
         "- 计算：1 + 2 * 3：安全计算",
         "- 待办 添加/列表/完成：管理待办",
@@ -941,6 +991,11 @@ if AGENT_MODE:
         state: T_State,
     ):
         """查看任务列表"""
+        if not should_handle_targeted_event(event, bot):
+            return
+        if not await require_owner(bot, event, "任务列表"):
+            return
+
         if agent_engine:
             tasks = await agent_engine.memory.get_pending_tasks()
             if not tasks:

@@ -54,6 +54,28 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
 - Fixed a `verified_only=True` SQL binding bug.
 - Changed `get_pending_tasks()` to return only pending tasks.
 
+### Stage 6A: Minimal Owner Permissions
+
+- Added `OWNER_QQ_IDS` configuration.
+- Added `src/plugins/claude/permissions.py`.
+- Added `/权限` / `/owner` style permission status command.
+- Restricted management commands to owner:
+  - `/status`
+  - `/model`
+  - `记忆开关 开/关`
+  - group `/clear`
+  - legacy Agent Mode `/tasks`
+- Kept per-user commands available to ordinary users:
+  - `记住：...`
+  - `忘记：...`
+  - `我的资料`
+  - `待办`
+  - `时间`
+  - `计算`
+  - `记忆查询`
+- Tightened group targeting by removing raw QQ-number substring matching.
+- Disabled automatic memory extraction in group chats; group users can still use explicit `记住：...`.
+
 ## Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` and `data/sessions/group_<groupQQ>.json`
@@ -89,8 +111,7 @@ Store outputs under `data/style_profiles/`. The bot should generate reply drafts
 
 ### Stage 6: Permission and Contact Whitelist
 
-- Configure owner QQ IDs.
-- Restrict admin commands to owner.
+- Expand beyond the 6A owner-only skeleton.
 - Add confirmation for high-risk actions.
 - Add private/group permission tiers.
 - Add optional contact/group whitelist for style draft and future automation modes.

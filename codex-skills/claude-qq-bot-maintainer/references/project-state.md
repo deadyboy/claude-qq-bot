@@ -63,6 +63,21 @@
 - Fixed `verified_only=True` SQL binding bug in `memory_core.py`.
 - Changed `get_pending_tasks()` to return only pending tasks.
 
+### Stage 6A: Minimal Owner Permissions
+
+- Added `OWNER_QQ_IDS` configuration.
+- Added `src/plugins/claude/permissions.py`.
+- Added `/权限` / `/owner` permission status command.
+- Restricted owner-only management commands:
+  - `/status`
+  - `/model`
+  - `记忆开关 开/关`
+  - group `/clear`
+  - legacy Agent Mode `/tasks`
+- Kept user-scoped commands available to ordinary users.
+- Removed raw QQ-number substring matching from group targeting.
+- Disabled automatic memory extraction in group chats; explicit `记住：...` remains available.
+
 ## Current Storage Model
 
 - Short-term sessions: `data/sessions/private_<userQQ>.json` or `data/sessions/group_<groupQQ>.json`.
@@ -98,8 +113,7 @@ Do not mix imported chat logs into current user_profile facts. Treat them as sty
 
 ### Stage 6: Permission and Contact Whitelist
 
-- Configure owner QQ IDs.
-- Restrict admin commands to owner.
+- Expand beyond the 6A owner-only skeleton.
 - Add confirmation for high-risk actions.
 - Add private/group permission tiers.
 - Add optional contact/group whitelist for style draft and future automation modes.
