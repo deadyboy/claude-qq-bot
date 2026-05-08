@@ -334,6 +334,11 @@ async def test_style_profile():
         assert detect_message_intent("你在哪")["is_question"]
         assert detect_message_intent("这个怎么弄")["help_request"]
         assert detect_message_intent("能不能帮我看下")["task_request"]
+        assert detect_message_intent("有无瓦")["game_invitation"]
+        assert detect_message_intent("打不打瓦")["game_invitation"]
+        assert detect_message_intent("玩不玩瓦")["game_invitation"]
+        assert detect_message_intent("有无ai大手子")["is_question"]
+        assert not detect_message_intent("有无ai大手子")["invitation"]
 
         txt_records = parse_chat_log_text(
             "owner: 05-08 01:00:11\n样例回复A\nfriend: 05-08 01:00:12\n样例问题A",

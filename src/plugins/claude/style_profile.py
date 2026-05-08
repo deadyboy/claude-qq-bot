@@ -947,6 +947,7 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
                 f"现实/可用性={bool(intent.get('availability_query') or intent.get('reality_state_query'))}，"
                 f"求助={bool(intent.get('help_request'))}，"
                 f"邀约={bool(intent.get('invitation'))}，"
+                f"游戏邀约={bool(intent.get('game_invitation'))}，"
                 f"任务={bool(intent.get('task_request'))}"
             )
 

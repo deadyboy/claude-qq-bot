@@ -36,12 +36,14 @@ DEFAULT_RETRIEVAL_LIMIT = 6
 DEFAULT_GENERATION_CONTEXT_LIMIT = 5
 DEFAULT_RAW_FEWSHOT_LIMIT = 3
 MAX_RAW_FEWSHOT_TEXT_CHARS = 180
-MIN_RAW_FEWSHOT_SIMILARITY = 0.18
+MIN_RAW_FEWSHOT_SIMILARITY = 0.26
+MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD = 0.08
 
 QUESTION_HINTS = (
     "吗", "么", "呢", "吧", "怎么", "咋", "咋办", "为啥", "为什么", "什么",
     "哪个", "哪一个", "哪里", "在哪", "哪儿", "多少", "几", "能不能",
-    "可不可以", "要不要", "是不是", "有没有", "行不行", "好不好",
+    "可不可以", "要不要", "是不是", "有没有", "有无", "行不行", "好不好",
+    "打不打", "玩不玩", "开不开", "上不上",
 )
 AVAILABILITY_HINTS = (
     "忙不忙", "忙吗", "有空", "空吗", "在不在", "在吗", "睡了吗", "醒了吗",
@@ -53,7 +55,12 @@ HELP_HINTS = (
 )
 INVITATION_HINTS = (
     "一起", "吃饭", "喝", "见面", "出来", "来吗", "去吗", "约", "今晚",
-    "明天", "周末", "要不要来", "要不要去",
+    "明天", "周末", "要不要来", "要不要去", "打不打", "玩不玩",
+    "开不开", "上不上",
+)
+GAME_HINTS = (
+    "瓦", "瓦罗兰特", "瓦洛兰特", "无畏契约", "valorant", "lol", "联盟",
+    "王者", "农", "apex", "cs", "csgo", "cs2", "原神", "崩铁", "游戏",
 )
 TASK_HINTS = (
     "发我", "给我", "帮我", "处理", "改一下", "看一下", "做一下", "整理",
@@ -251,9 +258,14 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
     normalized = re.sub(r"\s+", "", str(text or "").lower())
     has_mark = "?" in normalized or "？" in normalized
     has_question_hint = _contains_any(normalized, QUESTION_HINTS)
+    has_game_term = _contains_any(normalized, GAME_HINTS)
+    has_play_invite_pattern = bool(
+        re.search(r"(有无|有没有|打不打|玩不玩|开不开|上不上|来不来|要不要).{0,8}", normalized)
+    )
+    game_invitation = has_game_term and has_play_invite_pattern
     availability_query = _contains_any(normalized, AVAILABILITY_HINTS)
     help_request = _contains_any(normalized, HELP_HINTS)
-    invitation = _contains_any(normalized, INVITATION_HINTS)
+    invitation = game_invitation or _contains_any(normalized, INVITATION_HINTS)
     task_request = _contains_any(normalized, TASK_HINTS)
     image_reference = _contains_any(normalized, IMAGE_HINTS)
     reality_state_query = _contains_any(normalized, REALITY_STATE_HINTS)
@@ -265,7 +277,9 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
         or invitation
     )
 
-    if availability_query or reality_state_query:
+    if game_invitation:
+        question_type = "game_invitation"
+    elif availability_query or reality_state_query:
         question_type = "availability_or_reality"
     elif help_request:
         question_type = "help_request"
@@ -284,9 +298,11 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
         "availability_query": availability_query,
         "help_request": help_request,
         "invitation": invitation,
+        "game_invitation": game_invitation,
         "task_request": task_request,
         "image_reference": image_reference,
         "reality_state_query": reality_state_query,
+        "game_term": has_game_term,
         "question_mark": has_mark,
         "question_hint": has_question_hint,
     }
@@ -332,6 +348,7 @@ def _keyword_tokens(text: str) -> set[str]:
         "availability_query",
         "help_request",
         "invitation",
+        "game_invitation",
         "task_request",
         "image_reference",
         "reality_state_query",
@@ -360,6 +377,7 @@ def _intent_similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
         "availability_query",
         "help_request",
         "invitation",
+        "game_invitation",
         "task_request",
         "image_reference",
         "reality_state_query",
@@ -1564,7 +1582,9 @@ def retrieve_similar_style_samples(
         keyword_overlap = _jaccard(query_keywords, _keyword_tokens(context_text))
         context_intent = detect_message_intent(context_text)
         intent_bonus = _intent_similarity(query_intent, context_intent)
-        if overlap <= 0 and keyword_overlap <= 0 and intent_bonus <= 0:
+        if overlap <= 0 and keyword_overlap <= 0 and intent_bonus < 0.08:
+            continue
+        if query_intent.get("game_invitation") and overlap <= 0 and keyword_overlap <= 0:
             continue
         reply = sample.get("reply") or {}
         feature_bonus = 0.0
@@ -1573,8 +1593,11 @@ def retrieve_similar_style_samples(
         if query_features["length_bucket"] == reply.get("length_bucket"):
             feature_bonus += 0.03
         chat_type_bonus = 0.0
-        if preferred_chat_type and sample.get("chat_type") == preferred_chat_type:
-            chat_type_bonus += 0.04
+        if preferred_chat_type:
+            if sample.get("chat_type") == preferred_chat_type:
+                chat_type_bonus += 0.12
+            else:
+                chat_type_bonus -= 0.08
         source_bonus = 0.0
         if preferred_source_file_id and source_file_id == preferred_source_file_id:
             source_bonus += 0.1
@@ -1750,9 +1773,16 @@ def _derive_generation_guidance(
     scene_profiles: Sequence[Dict[str, Any]],
     relationship_profiles: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    strong_results = [
+        item for item in retrieval_results
+        if _safe_float(item.get("similarity")) >= 0.32
+        or _safe_float(item.get("context_overlap")) >= 0.12
+        or _safe_float(item.get("keyword_overlap")) >= 0.12
+    ]
+    length_source = strong_results or retrieval_results
     reply_lengths = [
         _safe_int(item.get("reply_char_length"))
-        for item in retrieval_results
+        for item in length_source
         if _safe_int(item.get("reply_char_length")) > 0
     ]
     if not reply_lengths:
@@ -1770,7 +1800,14 @@ def _derive_generation_guidance(
     for item in relationship_profiles:
         labels.update(item.get("labels") or [])
 
-    if target_length <= 8:
+    intent = query_features.get("intent") or {}
+    if intent.get("game_invitation"):
+        target_length = min(target_length, 12)
+        length_instruction = "优先 3-12 字短回复，像自然邀约接话"
+    elif intent.get("invitation"):
+        target_length = min(target_length, 14)
+        length_instruction = "优先 6-14 字短回复，不直接承诺"
+    elif target_length <= 8:
         length_instruction = "优先 3-8 字短回复"
     elif target_length <= 18:
         length_instruction = "优先 8-18 字中短回复"
@@ -1779,8 +1816,9 @@ def _derive_generation_guidance(
     else:
         length_instruction = "可以稍微展开，但保持口语化"
 
-    intent = query_features.get("intent") or {}
-    if intent.get("availability_query") or intent.get("reality_state_query"):
+    if intent.get("game_invitation"):
+        stance = "对方在发游戏邀约时，优先短句接话；不知道主人是否能玩时不要替主人承诺上线。"
+    elif intent.get("availability_query") or intent.get("reality_state_query"):
         stance = "对方在问主人现实状态或可用性时，不要替主人确认忙闲、位置或进度；优先自然追问或模糊过渡。"
     elif intent.get("help_request"):
         stance = "对方在求助时，先接住请求；信息不足时让对方发具体内容或说明卡在哪一步。"
@@ -1807,6 +1845,7 @@ def _derive_generation_guidance(
             "availability_query": bool(intent.get("availability_query")),
             "help_request": bool(intent.get("help_request")),
             "invitation": bool(intent.get("invitation")),
+            "game_invitation": bool(intent.get("game_invitation")),
             "task_request": bool(intent.get("task_request")),
             "image_reference": bool(intent.get("image_reference")),
             "reality_state_query": bool(intent.get("reality_state_query")),
@@ -1834,6 +1873,7 @@ def _build_raw_few_shot_examples(
     retrieval_results: Sequence[Dict[str, Any]],
     *,
     limit: int = DEFAULT_RAW_FEWSHOT_LIMIT,
+    preferred_chat_type: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Extract real historical snippets for owner-authorized few-shot prompts.
 
@@ -1849,6 +1889,13 @@ def _build_raw_few_shot_examples(
     examples = []
     for result in retrieval_results:
         if _safe_float(result.get("similarity")) < MIN_RAW_FEWSHOT_SIMILARITY:
+            continue
+        if (
+            _safe_float(result.get("context_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
+            and _safe_float(result.get("keyword_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
+        ):
+            continue
+        if preferred_chat_type and result.get("chat_type") != preferred_chat_type:
             continue
         sample_id = str(result.get("sample_id") or "")
         sample = by_sample_id.get(sample_id)
@@ -1993,6 +2040,7 @@ def build_style_generation_context(
             samples,
             retrieval_results,
             limit=max(0, min(DEFAULT_RAW_FEWSHOT_LIMIT, int(raw_fewshot_limit))),
+            preferred_chat_type=chat_type,
         )
 
     return {
@@ -2055,6 +2103,7 @@ def format_style_debug_report(
             f"可用性/现实={bool(intent.get('availability_query') or intent.get('reality_state_query'))}，"
             f"求助={bool(intent.get('help_request'))}，"
             f"邀约={bool(intent.get('invitation'))}，"
+            f"游戏邀约={bool(intent.get('game_invitation'))}，"
             f"任务={bool(intent.get('task_request'))}，"
             f"图片={bool(intent.get('image_reference'))}"
         ),
@@ -2089,7 +2138,9 @@ def format_style_debug_report(
             lines.append(f"- 主人：{example.get('owner_reply')}")
     else:
         lines.append(
-            f"真实历史样本：无。可能是相似度低于 {MIN_RAW_FEWSHOT_SIMILARITY}，或命中样本含凭据/无可用文本。"
+            f"真实历史样本：无。可能是相似度低于 {MIN_RAW_FEWSHOT_SIMILARITY}、"
+            f"文本/关键词命中低于 {MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD}、"
+            "私聊/群聊类型不匹配，或命中样本含凭据/无可用文本。"
         )
     return "\n".join(lines)
 
