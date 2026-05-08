@@ -3,12 +3,24 @@
 ## Current Runtime Shape
 
 - Project path: `F:\ClaudeSpace2\claude-qq-bot`
+- Stage 6B worktree: `F:\ClaudeSpace2\claude-qq-bot-stage6b` on branch `stage6b`
 - NapCat path: `F:\迅雷下载\NapCat.Shell`
 - NapCat WebUI: `http://127.0.0.1:6099/webui/`
 - Bot reverse WebSocket listener: `127.0.0.1:8081`
 - Current Git branch: `master`
 
 Do not commit `.env`, `data/`, logs, caches, or user memory.
+
+## Runtime Repair Notes
+
+### 2026-05-08 NapCat Startup and Git Worktree Repair
+
+- NapCat launcher scripts in `F:\迅雷下载\NapCat.Shell` now change to their own directory before generating `loadNapCat.js`, preventing wrong loader paths when launched from another current directory.
+- `loadNapCat.js` was restored to `file:///F:/迅雷下载/NapCat.Shell/napcat.mjs`.
+- NapCat global OneBot account was aligned to bot QQ `2920249374`; previous global account value pointed at owner QQ `1030400950`.
+- NapCat file logging was enabled for future startup diagnostics.
+- `git worktree add` failed under normal Codex permissions because `.git` writes were denied; using elevated git created `F:\ClaudeSpace2\claude-qq-bot-stage6b` on branch `stage6b`.
+- Startup order remains: start bot listener on `127.0.0.1:8081`, then start NapCat/QQ.
 
 ## Completed Stages
 
