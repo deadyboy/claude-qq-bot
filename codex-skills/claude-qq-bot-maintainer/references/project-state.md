@@ -167,14 +167,26 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
   - `/风格 检索 <当前对方消息>`
 - Similar-sample retrieval reads local QCE JSON transiently and returns only sample ids/statistics, not raw historical text.
 - Added Stage 5B generation loop v1: `/用我的风格回复：...` now builds a no-raw-text generation context from the latest distillation run, including similar sample metadata, relationship/source labels, scene recommendations, and length guidance.
-- The generation loop does not send historical raw chat text to the model. Few-shot generation with true historical lines remains a separate future feature requiring explicit owner authorization and audit logging.
+- Added explicit raw few-shot mode:
+  - `/风格 原句 状态`
+  - `/风格 原句 开`
+  - `/风格 原句 关`
+- Raw few-shot mode is default-off, owner-only, private-only, confirmation-gated when enabling, and audited in `data/action_logs.jsonl`. Audit entries record ids/hashes/counts, not raw text.
+- When enabled, the generation loop can send a small number of redacted real QCE historical context/reply pairs as transient few-shot prompt examples. These snippets are not persisted into profiles or distillation outputs.
+- Added controlled owner-style auto-reply:
+  - `/代聊 状态`
+  - `/代聊 开`
+  - `/代聊 关`
+  - `/风格 自动回复 开/关`
+- Auto-reply is default-off and confirmation-gated when enabling. It only acts for trusted private users or trusted groups, requires a Stage 5B source mapping for that target, and group chats still require @/reply targeting.
 
 Still planned:
 
 - Redesign style-profile fields for stronger imitation beyond draft replies.
 - Add true generation-vs-history evaluation after retrieval quality is stable.
 - Improve phrase extraction to avoid generic words.
-- Map live contacts/groups to the correct relationship-specific style profile.
+- Improve live contact/group mapping accuracy if QCE exporter filename formats change.
+- Add a risk classifier for auto-reply vs draft-only vs silence.
 
 ### Stage 6: Permission and Contact Whitelist
 

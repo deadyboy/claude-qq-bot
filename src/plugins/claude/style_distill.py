@@ -34,9 +34,16 @@ CONTEXT_WINDOW_SECONDS = 30 * 60
 MAX_RELATIONSHIP_PROFILES = 500
 DEFAULT_RETRIEVAL_LIMIT = 6
 DEFAULT_GENERATION_CONTEXT_LIMIT = 5
+DEFAULT_RAW_FEWSHOT_LIMIT = 3
+MAX_RAW_FEWSHOT_TEXT_CHARS = 180
 
 TEXT_PLACEHOLDER_RE = re.compile(r"^\s*\[(?:图片|视频|语音|表情|文件|动画表情|转发消息).*\]\s*$")
 URL_RE = re.compile(r"https?://|www\.", flags=re.I)
+RAW_URL_RE = re.compile(r"https?://\S+|www\.\S+", flags=re.I)
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", flags=re.I)
+PHONE_RE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
+ID_CARD_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
+LONG_ID_RE = re.compile(r"(?<!\d)\d{6,12}(?!\d)")
 EMOJI_RE = re.compile(
     "["
     "\U0001F300-\U0001FAFF"
@@ -1324,11 +1331,68 @@ def _load_source_messages(catalog: Dict[str, Any], source_file_id: str, cache: D
     return []
 
 
+def _source_target_id(source: Dict[str, Any]) -> str:
+    """Best-effort target id from QCE export filenames/metadata."""
+    text = " ".join(
+        str(source.get(key) or "")
+        for key in ("relative_path", "file_name", "name")
+    )
+    chat_type = str(source.get("chat_type") or "")
+    patterns = []
+    if chat_type == "private":
+        patterns = [r"private_(\d{5,12})", r"friend_[^\\/_]*_(?:\d+_)?private_(\d{5,12})"]
+    elif chat_type == "group":
+        patterns = [r"group_(\d{5,12})", r"troop_(\d{5,12})"]
+    else:
+        patterns = [r"(?:private|group|troop)_(\d{5,12})"]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def find_source_for_target(
+    target_id: str | int,
+    *,
+    chat_type: str | None = None,
+    run_dir: str | Path | None = None,
+) -> Dict[str, Any]:
+    """Map a live QQ user/group id to a local source_file_id without returning names or text."""
+    target = str(target_id).strip()
+    if not target:
+        return {"matched": False}
+    try:
+        run_path, catalog, _ = _resolve_run_paths(run_dir)
+    except Exception as e:
+        return {"matched": False, "error": type(e).__name__}
+
+    expected_chat_type = str(chat_type or "").strip()
+    for source in catalog.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source_chat_type = str(source.get("chat_type") or "")
+        if expected_chat_type and source_chat_type != expected_chat_type:
+            continue
+        if _source_target_id(source) != target:
+            continue
+        return {
+            "matched": True,
+            "run_id": run_path.name,
+            "source_file_id": str(source.get("source_file_id") or ""),
+            "chat_type": source_chat_type,
+            "raw_identifier_policy": "QQ/group ids are used locally for mapping but are not included in prompts.",
+        }
+    return {"matched": False, "run_id": run_path.name}
+
+
 def retrieve_similar_style_samples(
     query: str,
     *,
     run_dir: str | Path | None = None,
     limit: int = DEFAULT_RETRIEVAL_LIMIT,
+    preferred_source_file_id: str | None = None,
+    preferred_chat_type: str | None = None,
 ) -> Dict[str, Any]:
     """Retrieve similar indexed samples using local raw QCE text transiently.
 
@@ -1376,6 +1440,10 @@ def retrieve_similar_style_samples(
             feature_bonus += 0.04
         if query_features["length_bucket"] == reply.get("length_bucket"):
             feature_bonus += 0.03
+        if preferred_chat_type and sample.get("chat_type") == preferred_chat_type:
+            feature_bonus += 0.02
+        if preferred_source_file_id and source_file_id == preferred_source_file_id:
+            feature_bonus += 0.08
         total_score = round(overlap + feature_bonus + (int(sample.get("score") or 0) / 1000), 4)
         results.append({
             "sample_id": sample.get("sample_id"),
@@ -1579,14 +1647,110 @@ def _derive_generation_guidance(
     }
 
 
+def _clean_raw_fewshot_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text)).strip()
+    if not cleaned:
+        return ""
+    cleaned = RAW_URL_RE.sub("[链接]", cleaned)
+    cleaned = EMAIL_RE.sub("[邮箱]", cleaned)
+    cleaned = PHONE_RE.sub("[手机号]", cleaned)
+    cleaned = ID_CARD_RE.sub("[证件号]", cleaned)
+    cleaned = LONG_ID_RE.sub("[数字ID]", cleaned)
+    if contains_sensitive_content(cleaned):
+        return ""
+    return cleaned[:MAX_RAW_FEWSHOT_TEXT_CHARS]
+
+
+def _build_raw_few_shot_examples(
+    catalog: Dict[str, Any],
+    samples: Sequence[Dict[str, Any]],
+    retrieval_results: Sequence[Dict[str, Any]],
+    *,
+    limit: int = DEFAULT_RAW_FEWSHOT_LIMIT,
+) -> List[Dict[str, Any]]:
+    """Extract real historical snippets for owner-authorized few-shot prompts.
+
+    The returned examples are intended for immediate prompt construction only
+    and must not be persisted or logged.
+    """
+    by_sample_id = {
+        str(sample.get("sample_id") or ""): sample
+        for sample in samples
+        if isinstance(sample, dict)
+    }
+    cache: Dict[str, List[Dict[str, Any]]] = {}
+    examples = []
+    for result in retrieval_results:
+        sample_id = str(result.get("sample_id") or "")
+        sample = by_sample_id.get(sample_id)
+        if not sample:
+            continue
+        source_file_id = str(sample.get("source_file_id") or "")
+        messages = _load_source_messages(catalog, source_file_id, cache)
+        if not messages:
+            continue
+
+        context_lines = []
+        for ref in (sample.get("context") or {}).get("messages") or []:
+            role = str(ref.get("role") or "")
+            if role not in {"other", "self"}:
+                continue
+            try:
+                record_index = int(ref.get("record_index"))
+            except (TypeError, ValueError):
+                continue
+            if record_index < 0 or record_index >= len(messages):
+                continue
+            text = _clean_raw_fewshot_text(_message_text(messages[record_index]))
+            if not text:
+                continue
+            label = "主人" if role == "self" else "对方"
+            context_lines.append({"role": label, "text": text})
+            if len(context_lines) >= 3:
+                break
+
+        reply_ref = sample.get("reply") or {}
+        reply_index = _safe_int(reply_ref.get("record_index"), -1)
+        if reply_index < 0 or reply_index >= len(messages):
+            continue
+        owner_reply = _clean_raw_fewshot_text(_message_text(messages[reply_index]))
+        if not owner_reply:
+            continue
+        if not context_lines:
+            continue
+
+        examples.append({
+            "sample_id": sample_id,
+            "source_file_id": source_file_id,
+            "chat_type": sample.get("chat_type"),
+            "similarity": result.get("similarity"),
+            "quality_score": result.get("quality_score"),
+            "context": context_lines,
+            "owner_reply": owner_reply,
+            "char_counts": {
+                "context": sum(len(item.get("text") or "") for item in context_lines),
+                "owner_reply": len(owner_reply),
+            },
+        })
+        if len(examples) >= limit:
+            break
+    return examples
+
+
 def build_style_generation_context(
     query: str,
     *,
     run_dir: str | Path | None = None,
     limit: int = DEFAULT_GENERATION_CONTEXT_LIMIT,
     chat_type: str | None = None,
+    target_id: str | int | None = None,
+    include_raw_fewshot: bool = False,
+    raw_fewshot_limit: int = DEFAULT_RAW_FEWSHOT_LIMIT,
 ) -> Dict[str, Any]:
-    """Build a no-raw-text Stage 5B context for style draft generation."""
+    """Build a Stage 5B context for style draft generation.
+
+    Raw historical snippets are included only when include_raw_fewshot=True.
+    """
     query_text = query.strip()
     if not query_text:
         return {"ok": False, "message": "用法：/用我的风格回复：<对方消息>"}
@@ -1595,7 +1759,16 @@ def build_style_generation_context(
         run_path = find_latest_distill_run(run_dir)
         if run_path is None:
             raise FileNotFoundError("还没有找到 Stage 5B 离线蒸馏结果。")
-        retrieval = retrieve_similar_style_samples(query_text, run_dir=run_path, limit=limit)
+        target_mapping = find_source_for_target(target_id, chat_type=chat_type, run_dir=run_path) if target_id else {"matched": False}
+        preferred_source = str(target_mapping.get("source_file_id") or "") if target_mapping.get("matched") else ""
+        run_path, catalog, samples = _resolve_run_paths(run_path)
+        retrieval = retrieve_similar_style_samples(
+            query_text,
+            run_dir=run_path,
+            limit=limit,
+            preferred_source_file_id=preferred_source or None,
+            preferred_chat_type=chat_type,
+        )
         relationship_path = run_path / "relationship_profiles.json"
         scene_path = run_path / "scene_profiles.json"
         evaluation_path = run_path / "evaluation_report.json"
@@ -1615,6 +1788,23 @@ def build_style_generation_context(
     retrieval_results = list(retrieval.get("results") or [])
     query_features = retrieval.get("query_features") or _features_for_text(query_text)
     relationship_profiles = _select_relationship_profiles(relationships, retrieval_results)
+    if target_mapping.get("matched"):
+        mapped_source = str(target_mapping.get("source_file_id") or "")
+        profiles = relationships.get("profiles") or []
+        mapped_profile = next(
+            (
+                item for item in profiles
+                if isinstance(item, dict) and str(item.get("source_file_id") or "") == mapped_source
+            ),
+            None,
+        )
+        if mapped_profile and all(item.get("source_file_id") != mapped_source for item in relationship_profiles):
+            relationship_profiles = _select_relationship_profiles(
+                {"profiles": [mapped_profile]},
+                [{"source_file_id": mapped_source}],
+                limit=1,
+            ) + relationship_profiles
+            relationship_profiles = relationship_profiles[:3]
     scene_profiles = _select_scene_profiles(
         scenes,
         retrieval_results,
@@ -1627,20 +1817,36 @@ def build_style_generation_context(
         scene_profiles,
         relationship_profiles,
     )
+    raw_examples = []
+    if include_raw_fewshot:
+        raw_examples = _build_raw_few_shot_examples(
+            catalog,
+            samples,
+            retrieval_results,
+            limit=max(0, min(DEFAULT_RAW_FEWSHOT_LIMIT, int(raw_fewshot_limit))),
+        )
 
     return {
         "ok": True,
         "run_id": run_path.name,
         "readiness": evaluation.get("readiness") or "unknown",
         "raw_text_policy": (
-            "Historical text may be read locally for similarity scoring, but this generation context "
-            "contains no raw historical chat text."
+            "Historical text may be read locally for similarity scoring. Raw few-shot examples are included "
+            "only when explicitly authorized for immediate prompt construction."
         ),
+        "raw_fewshot_included": bool(raw_examples),
+        "target_mapping": {
+            "matched": bool(target_mapping.get("matched")),
+            "source_file_id": target_mapping.get("source_file_id") if target_mapping.get("matched") else "",
+            "chat_type": target_mapping.get("chat_type") if target_mapping.get("matched") else str(chat_type or ""),
+            "identifier_policy": "Target QQ/group id is used locally but not included in prompts.",
+        },
         "query_features": query_features,
         "similar_samples": retrieval_results,
         "relationship_profiles": relationship_profiles,
         "scene_profiles": scene_profiles,
         "guidance": guidance,
+        "few_shot_examples": raw_examples,
     }
 
 

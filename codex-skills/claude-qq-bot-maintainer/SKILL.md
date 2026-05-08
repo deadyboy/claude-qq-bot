@@ -79,8 +79,9 @@ Implemented stable commands include:
 - `时间`.
 - `计算：1 + 2 * 3`.
 - `待办 添加 ...`, `待办`, `待办 完成 1`.
-- `/风格 查看`, `/风格 设置 ...`, `/风格 导入 ...`, `/风格 导入文件 <文件名> 我=<昵称或QQ>`, `/风格 确认导入 <id>`, `/风格 蒸馏`, `/风格 离线蒸馏`, `/风格 评估`, `/风格 关系`, `/风格 场景`, `/风格 检索 ...`, `/风格 清空样本 确认`.
+- `/风格 查看`, `/风格 设置 ...`, `/风格 导入 ...`, `/风格 导入文件 <文件名> 我=<昵称或QQ>`, `/风格 确认导入 <id>`, `/风格 蒸馏`, `/风格 离线蒸馏`, `/风格 评估`, `/风格 关系`, `/风格 场景`, `/风格 检索 ...`, `/风格 原句 开/关`, `/风格 自动回复 开/关`, `/风格 清空样本 确认`.
 - `/用我的风格回复：...` generates an owner-style draft only; when Stage 5B outputs exist, it uses no-raw-text retrieval/relationship/scene metadata as generation context.
+- `/代聊 开/关/状态` controls trusted-contact owner-style auto-reply. Enabling requires confirmation; recipients must be trusted and mapped to a Stage 5B source.
 - `/model`, `/clear`, `/help`.
 
 ## Design Direction

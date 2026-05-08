@@ -829,6 +829,8 @@ def parse_style_command(text: str) -> tuple[str, str]:
         "relationships": ("关系", "关系画像", "relationship", "relationships"),
         "scenes": ("场景", "场景画像", "scene", "scenes"),
         "retrieve": ("检索", "相似", "相似样本", "retrieve", "search"),
+        "raw_fewshot": ("原句", "原文", "真实原句", "fewshot", "few-shot"),
+        "auto_reply": ("自动回复", "代聊", "auto-reply", "autoreply", "auto reply"),
         "clear_examples": ("清空样本", "clear examples"),
         "help": ("帮助", "help"),
     }
@@ -889,6 +891,8 @@ def format_style_help() -> str:
         "- /风格 关系：查看关系/场景来源画像摘要",
         "- /风格 场景：查看场景画像摘要",
         "- /风格 检索 <当前对方消息>：本地检索相似历史样本索引，不返回历史原文",
+        "- /风格 原句 开/关：控制真实历史原句 few-shot，开启需要二次确认并写审计",
+        "- /风格 自动回复 开/关：控制信任名单内的 owner-style 代聊自动回复",
         "- /风格 清空样本 确认：删除已导入样本",
         "- /用我的风格回复：<对方消息>：生成一条草稿；若有 Stage 5B 结果，会接入检索/关系/场景元数据",
     ])
@@ -900,11 +904,20 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
         return ""
 
     lines = [
-        "Stage 5B 生成上下文（只含统计/索引元数据，不含历史聊天原文）：",
+        "Stage 5B 生成上下文：",
         f"- run_id：{context.get('run_id')}",
         f"- 数据就绪度：{context.get('readiness')}",
-        "- 历史原文策略：不向模型提供历史原文；只使用相似度、长度、场景、关系标签等元数据。",
     ]
+    if context.get("raw_fewshot_included"):
+        lines.append("- 历史原文策略：已由主人授权，将少量真实历史原句作为 few-shot 提供给模型；不要照抄隐私事实。")
+    else:
+        lines.append("- 历史原文策略：不向模型提供历史原文；只使用相似度、长度、场景、关系标签等元数据。")
+    target_mapping = context.get("target_mapping") or {}
+    if target_mapping.get("matched"):
+        lines.append(
+            "- 当前对象映射：已匹配到本地关系画像 "
+            f"{target_mapping.get('source_file_id')} ({target_mapping.get('chat_type')})；不暴露 QQ/群号。"
+        )
     guidance = context.get("guidance") or {}
     if guidance:
         lines.append("生成策略：")
@@ -956,6 +969,17 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
                 f"style={item.get('recommended_style')}"
             )
 
+    examples = context.get("few_shot_examples") or []
+    if examples:
+        lines.append("真实历史 few-shot 样本：")
+        lines.append("只学习“对方上下文 -> 主人回复”的表达映射，不要照抄其中的具体事实、姓名、时间、地点或承诺。")
+        for index, example in enumerate(examples[:3], start=1):
+            lines.append(f"样本 {index}：")
+            for item in example.get("context") or []:
+                role = item.get("role") or "对方"
+                lines.append(f"- {role}：{item.get('text')}")
+            lines.append(f"- 主人：{example.get('owner_reply')}")
+
     return "\n".join(lines)
 
 
@@ -995,7 +1019,72 @@ def build_style_system_prompt(
     return "\n".join(lines)
 
 
-async def generate_style_draft(message: str, store: StyleProfileStore = style_store) -> str:
+def _audit_style_generation(
+    *,
+    actor_id: str | int | None,
+    target_id: str | int | None,
+    scope: str,
+    context: Dict[str, Any] | None,
+    auto_reply: bool,
+) -> None:
+    if not context or not context.get("ok"):
+        return
+    raw_examples = context.get("few_shot_examples") or []
+    if not raw_examples and not auto_reply:
+        return
+    try:
+        from .confirmation import confirmation_store
+        sample_refs = []
+        for item in raw_examples[:5]:
+            sample_refs.append({
+                "sample_id": str(item.get("sample_id") or "")[:24],
+                "source_file_id": str(item.get("source_file_id") or "")[:32],
+                "chat_type": str(item.get("chat_type") or "")[:16],
+                "char_counts": item.get("char_counts") or {},
+            })
+        action_type = "style_auto_reply" if auto_reply else "style_raw_fewshot_prompt"
+        if auto_reply and raw_examples:
+            action_type = "style_auto_reply_raw_fewshot"
+        result = json.dumps(
+            {
+                "run_id": context.get("run_id"),
+                "scope": scope,
+                "target_hash": hashlib.sha1(str(target_id or "").encode("utf-8")).hexdigest()[:12],
+                "raw_fewshot_count": len(raw_examples),
+                "samples": sample_refs,
+                "target_mapping": context.get("target_mapping") or {},
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        confirmation_store.log(
+            {
+                "id": hashlib.sha1(result.encode("utf-8", errors="ignore")).hexdigest()[:8],
+                "type": action_type,
+                "summary": (
+                    "生成 owner-style 自动回复" if auto_reply
+                    else "生成 owner-style 草稿时使用真实历史 few-shot"
+                ),
+            },
+            actor_id=actor_id or "",
+            status="executed",
+            result=result,
+        )
+    except Exception:
+        return
+
+
+async def generate_style_draft(
+    message: str,
+    store: StyleProfileStore = style_store,
+    *,
+    include_raw_fewshot: bool | None = None,
+    chat_type: str | None = None,
+    target_id: str | int | None = None,
+    actor_id: str | int | None = None,
+    scope: str = "private",
+    auto_reply: bool = False,
+) -> str:
     target = message.strip()
     if not target:
         return "用法：/用我的风格回复：<对方消息>"
@@ -1006,9 +1095,25 @@ async def generate_style_draft(message: str, store: StyleProfileStore = style_st
     generation_context = None
     try:
         from .style_distill import build_style_generation_context
-        generation_context = await asyncio.to_thread(build_style_generation_context, target)
+        if include_raw_fewshot is None:
+            from .runtime_state import is_style_raw_fewshot_enabled
+            include_raw_fewshot = is_style_raw_fewshot_enabled()
+        generation_context = await asyncio.to_thread(
+            build_style_generation_context,
+            target,
+            chat_type=chat_type,
+            target_id=target_id,
+            include_raw_fewshot=bool(include_raw_fewshot),
+        )
     except Exception:
         generation_context = None
+    _audit_style_generation(
+        actor_id=actor_id,
+        target_id=target_id,
+        scope=scope,
+        context=generation_context,
+        auto_reply=auto_reply,
+    )
     return await llm_client.chat(
         messages=[{"role": "user", "content": f"对方消息：{target}"}],
         system_prompt=build_style_system_prompt(profile, generation_context),

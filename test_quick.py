@@ -53,10 +53,12 @@ from src.plugins.claude.style_profile import (
 )
 from src.plugins.claude.style_distill import (
     build_style_generation_context,
+    find_source_for_target,
     format_style_evaluation_report,
     retrieve_similar_style_samples,
     run_qce_style_distillation,
 )
+from src.plugins.claude import runtime_state
 
 RUN_ID = uuid.uuid4().hex[:8]
 
@@ -256,6 +258,25 @@ async def test_permissions():
 
     assert get_permission_level("nope") == "normal"
 
+    state_path = Path("data") / f"runtime_state_test_{RUN_ID}.json"
+    old_state_file = runtime_state.STATE_FILE
+    runtime_state.STATE_FILE = state_path
+    try:
+        assert runtime_state.is_style_raw_fewshot_enabled() is False
+        assert runtime_state.is_style_auto_reply_enabled() is False
+        runtime_state.set_style_raw_fewshot_enabled(True)
+        runtime_state.set_style_auto_reply_enabled(True)
+        assert runtime_state.is_style_raw_fewshot_enabled() is True
+        assert runtime_state.is_style_auto_reply_enabled() is True
+        runtime_state.set_style_raw_fewshot_enabled(False)
+        runtime_state.set_style_auto_reply_enabled(False)
+        assert runtime_state.is_style_raw_fewshot_enabled() is False
+        assert runtime_state.is_style_auto_reply_enabled() is False
+    finally:
+        runtime_state.STATE_FILE = old_state_file
+        if state_path.exists():
+            state_path.unlink()
+
     print("      通过")
     return True
 
@@ -299,6 +320,8 @@ async def test_style_profile():
         assert parse_style_command("/风格 关系") == ("relationships", "")
         assert parse_style_command("/风格 场景") == ("scenes", "")
         assert parse_style_command("/风格 检索 样例问题") == ("retrieve", "样例问题")
+        assert parse_style_command("/风格 原句 开") == ("raw_fewshot", "开")
+        assert parse_style_command("/风格 自动回复 开") == ("auto_reply", "开")
         assert parse_style_command("/风格 清空样本 确认") == ("clear_examples", "确认")
         assert parse_style_draft_payload("用我的风格回复：样例问题") == "样例问题"
         assert parse_style_import_file_payload("chat.csv 我=owner,me") == ("chat.csv", ["owner", "me"])
@@ -439,7 +462,7 @@ async def test_style_distill():
                 },
             ],
         }
-        (input_dir / "private_example.json").write_text(
+        (input_dir / "friend_recent_001_private_2000000002_test.json").write_text(
             json.dumps(sample_export, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -487,6 +510,10 @@ async def test_style_distill():
         assert "样例问题A" not in retrieval_text
         assert "样例回复A" not in retrieval_text
 
+        mapping = find_source_for_target("2000000002", chat_type="private", run_dir=output_dir)
+        assert mapping["matched"], mapping
+        assert mapping["chat_type"] == "private"
+
         generation_context = build_style_generation_context("样例问题", run_dir=output_dir)
         assert generation_context["ok"], generation_context
         assert generation_context["similar_samples"]
@@ -497,6 +524,23 @@ async def test_style_distill():
         assert "样例回复A" not in context_text
         assert "样例问题A" not in prompt_context
         assert "样例回复A" not in prompt_context
+
+        raw_context = build_style_generation_context(
+            "样例问题",
+            run_dir=output_dir,
+            chat_type="private",
+            target_id="2000000002",
+            include_raw_fewshot=True,
+        )
+        assert raw_context["ok"], raw_context
+        assert raw_context["raw_fewshot_included"]
+        raw_text = json.dumps(raw_context, ensure_ascii=False)
+        assert "样例问题A" in raw_text
+        assert "样例回复A" in raw_text
+        assert "sk-testsecret" not in raw_text
+        raw_prompt_context = format_generation_context_for_prompt(raw_context)
+        assert "真实历史 few-shot 样本" in raw_prompt_context
+        assert "样例回复A" in raw_prompt_context
 
         prompt = build_style_system_prompt(store.load(), generation_context)
         assert "Stage 5B 生成上下文" in prompt
