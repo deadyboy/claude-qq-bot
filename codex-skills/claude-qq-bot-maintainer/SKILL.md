@@ -32,6 +32,7 @@ Full user-facing command documentation is in `docs/command-guide.md`.
 - Bulk style imports must use `data/style_profiles/import_inbox/`, preview-confirm flow, and summary-only persistence; do not persist other-party messages.
 - Trust-list commands write only `data/permissions.json`; do not change ordinary chat behavior unless a future stage explicitly connects that policy.
 - High-risk actions should use `src/plugins/claude/confirmation.py` and log to `data/action_logs.jsonl`.
+- Treat deletion as a high-risk action. Before deleting anything, do a read-only review of resolved absolute paths, classify whether the target is protected project/config/data/export/login/credential material or disposable cache/temp output, and avoid deleting protected material unless the user explicitly names the exact path and confirms. Prefer archiving over deletion when the value is uncertain.
 
 ## Standard Workflow
 
