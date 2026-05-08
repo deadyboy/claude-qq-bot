@@ -12,11 +12,17 @@
 
 ## Runtime
 
-- NapCat WebUI: `http://127.0.0.1:6099/webui/`
+- Last inspected: 2026-05-09 05:xx Asia/Shanghai.
+- Current NapCat WebUI: `http://127.0.0.1:16099/webui/`.
+- QCE exporter endpoint observed on local port `40653`.
 - Bot reverse WebSocket listener: `127.0.0.1:8081`
 - NapCat config should point reverse WebSocket to `ws://127.0.0.1:8081/onebot/v11/ws`.
 - Prefer restarting only the bot listener, not NapCat, to preserve the QQ login session.
 - Full command guide: `docs/command-guide.md`.
+- Current observed runtime: Python bot process is listening on `127.0.0.1:8081` and connected to the local QQ/NapCat process.
+- Current runtime toggles in `data/runtime_state.json`: auto memory on, style raw few-shot on, style auto-reply on.
+- Current trust-list snapshot: 2 trusted private users, 0 trusted groups.
+- Current owner style profile snapshot: latest Stage 5B profile has 28,299 owner text samples, 857 candidate/indexed reply pairs, average length about 14.3 chars, median 6 chars, p90 22 chars, and 5 offline distillation runs recorded.
 
 ## Completed Work
 

@@ -11,7 +11,7 @@ Project path: `F:\ClaudeSpace2\claude-qq-bot`.
 
 NapCat path: `F:\迅雷下载\NapCat.Shell`.
 
-The bot is a NoneBot2 + OneBot v11 QQ bot connected to NapCat by reverse WebSocket on local port `8081`. NapCat WebUI is usually at `http://127.0.0.1:6099/webui/`.
+The bot is a NoneBot2 + OneBot v11 QQ bot connected to NapCat by reverse WebSocket on local port `8081`. NapCat WebUI was moved to a high local port; current observed WebUI is `http://127.0.0.1:16099/webui/` and QCE exporter was observed on port `40653`.
 
 Read `references/project-state.md` when a task asks about project history, roadmap, completed stages, memory/tool architecture, or future stage planning.
 
@@ -63,7 +63,7 @@ Full user-facing command documentation is in `docs/command-guide.md`.
 6. Restart only the bot after code changes:
    - Stop the listener on `127.0.0.1:8081`.
    - Start `python -u bot.py` from the project directory in a visible PowerShell window unless the user asks for hidden.
-   - Confirm `netstat -ano | Select-String -Pattern ':8081|:6099'` shows NapCat connected to `8081`.
+   - Confirm `netstat -ano | Select-String -Pattern ':8081|:16099|:40653'` shows NapCat connected to `8081`.
 
 ## Current Commands
 
