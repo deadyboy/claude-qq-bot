@@ -172,6 +172,11 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
   - `/风格 场景`
   - `/风格 检索 <当前对方消息>`
 - Similar-sample retrieval reads local QCE JSON transiently and returns only sample ids/statistics, not raw historical text.
+- Added Stage 5B-RAG v1 upgrades:
+  - Chinese intent detection for no-question-mark messages such as `你现在忙吗`, `在不在`, `这个怎么弄`, and `能不能帮我看下`.
+  - Hybrid retrieval scoring using character overlap, Chinese keyword overlap, intent match, chat type, target source mapping, and sample quality.
+  - Low-similarity retrieval results do not inject raw few-shot examples into generation.
+  - `/风格 调试 <当前对方消息>` shows owner-only/private-only intent, score breakdown, strategy, and visible raw historical context/reply snippets for debugging. Credential-like content is still skipped.
 - Added Stage 5B generation loop v1: `/用我的风格回复：...` now builds a no-raw-text generation context from the latest distillation run, including similar sample metadata, relationship/source labels, scene recommendations, and length guidance.
 - Added explicit raw few-shot mode:
   - `/风格 原句 状态`
@@ -190,6 +195,7 @@ Still planned:
 
 - Redesign style-profile fields for stronger imitation beyond draft replies.
 - Add true generation-vs-history evaluation after retrieval quality is stable.
+- Add embedding/semantic retrieval after the hybrid rule-based retrieval baseline is stable.
 - Improve phrase extraction to avoid generic words.
 - Improve live contact/group mapping accuracy if QCE exporter filename formats change.
 - Add a risk classifier for auto-reply vs draft-only vs silence.

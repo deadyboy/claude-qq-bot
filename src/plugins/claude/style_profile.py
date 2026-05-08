@@ -829,6 +829,7 @@ def parse_style_command(text: str) -> tuple[str, str]:
         "relationships": ("关系", "关系画像", "relationship", "relationships"),
         "scenes": ("场景", "场景画像", "scene", "scenes"),
         "retrieve": ("检索", "相似", "相似样本", "retrieve", "search"),
+        "debug": ("调试", "debug", "rag调试", "rag debug"),
         "raw_fewshot": ("原句", "原文", "真实原句", "fewshot", "few-shot"),
         "auto_reply": ("自动回复", "代聊", "auto-reply", "autoreply", "auto reply"),
         "clear_examples": ("清空样本", "clear examples"),
@@ -891,6 +892,7 @@ def format_style_help() -> str:
         "- /风格 关系：查看关系/场景来源画像摘要",
         "- /风格 场景：查看场景画像摘要",
         "- /风格 检索 <当前对方消息>：本地检索相似历史样本索引，不返回历史原文",
+        "- /风格 调试 <当前对方消息>：owner 私聊查看本次检索、意图和真实历史样本原文",
         "- /风格 原句 开/关：控制真实历史原句 few-shot，开启需要二次确认并写审计",
         "- /风格 自动回复 开/关：控制信任名单内的 owner-style 代聊自动回复",
         "- /风格 清空样本 确认：删除已导入样本",
@@ -930,6 +932,7 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
 
     query_features = context.get("query_features") or {}
     if query_features:
+        intent = query_features.get("intent") or {}
         lines.append(
             "- 当前消息特征："
             f"长度桶={query_features.get('length_bucket')}，"
@@ -937,6 +940,15 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
             f"感叹={query_features.get('has_exclamation')}，"
             f"省略={query_features.get('has_ellipsis')}"
         )
+        if intent:
+            lines.append(
+                "- 当前消息意图："
+                f"{intent.get('question_type')}，"
+                f"现实/可用性={bool(intent.get('availability_query') or intent.get('reality_state_query'))}，"
+                f"求助={bool(intent.get('help_request'))}，"
+                f"邀约={bool(intent.get('invitation'))}，"
+                f"任务={bool(intent.get('task_request'))}"
+            )
 
     samples = context.get("similar_samples") or []
     if samples:

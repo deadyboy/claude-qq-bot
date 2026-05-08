@@ -36,6 +36,34 @@ DEFAULT_RETRIEVAL_LIMIT = 6
 DEFAULT_GENERATION_CONTEXT_LIMIT = 5
 DEFAULT_RAW_FEWSHOT_LIMIT = 3
 MAX_RAW_FEWSHOT_TEXT_CHARS = 180
+MIN_RAW_FEWSHOT_SIMILARITY = 0.18
+
+QUESTION_HINTS = (
+    "吗", "么", "呢", "吧", "怎么", "咋", "咋办", "为啥", "为什么", "什么",
+    "哪个", "哪一个", "哪里", "在哪", "哪儿", "多少", "几", "能不能",
+    "可不可以", "要不要", "是不是", "有没有", "行不行", "好不好",
+)
+AVAILABILITY_HINTS = (
+    "忙不忙", "忙吗", "有空", "空吗", "在不在", "在吗", "睡了吗", "醒了吗",
+    "起了吗", "在哪", "哪里", "到哪", "来不来", "能来", "方便吗",
+)
+HELP_HINTS = (
+    "怎么弄", "咋弄", "怎么搞", "咋搞", "怎么处理", "怎么办", "咋办",
+    "帮我", "帮忙", "看下", "看看", "能不能帮", "会不会", "教我",
+)
+INVITATION_HINTS = (
+    "一起", "吃饭", "喝", "见面", "出来", "来吗", "去吗", "约", "今晚",
+    "明天", "周末", "要不要来", "要不要去",
+)
+TASK_HINTS = (
+    "发我", "给我", "帮我", "处理", "改一下", "看一下", "做一下", "整理",
+    "查一下", "确认一下", "弄一下",
+)
+IMAGE_HINTS = ("图片", "照片", "截图", "[图片]", "[表情]", "[动画表情]", "这个图", "这张图")
+REALITY_STATE_HINTS = (
+    "忙", "有空", "在不在", "在吗", "在哪", "哪里", "做完", "好了没",
+    "到哪", "来不来", "睡了吗", "醒了吗", "起了吗", "方便吗",
+)
 
 TEXT_PLACEHOLDER_RE = re.compile(r"^\s*\[(?:图片|视频|语音|表情|文件|动画表情|转发消息).*\]\s*$")
 URL_RE = re.compile(r"https?://|www\.", flags=re.I)
@@ -214,16 +242,68 @@ def _bucket_length(length: int) -> str:
     return "81+"
 
 
+def _contains_any(text: str, hints: Sequence[str]) -> bool:
+    return any(hint in text for hint in hints)
+
+
+def detect_message_intent(text: str) -> Dict[str, Any]:
+    """Detect coarse Chinese chat intent without requiring explicit question marks."""
+    normalized = re.sub(r"\s+", "", str(text or "").lower())
+    has_mark = "?" in normalized or "？" in normalized
+    has_question_hint = _contains_any(normalized, QUESTION_HINTS)
+    availability_query = _contains_any(normalized, AVAILABILITY_HINTS)
+    help_request = _contains_any(normalized, HELP_HINTS)
+    invitation = _contains_any(normalized, INVITATION_HINTS)
+    task_request = _contains_any(normalized, TASK_HINTS)
+    image_reference = _contains_any(normalized, IMAGE_HINTS)
+    reality_state_query = _contains_any(normalized, REALITY_STATE_HINTS)
+    is_question = bool(
+        has_mark
+        or has_question_hint
+        or availability_query
+        or help_request
+        or invitation
+    )
+
+    if availability_query or reality_state_query:
+        question_type = "availability_or_reality"
+    elif help_request:
+        question_type = "help_request"
+    elif invitation:
+        question_type = "invitation"
+    elif task_request:
+        question_type = "task_request"
+    elif is_question:
+        question_type = "general_question"
+    else:
+        question_type = "statement"
+
+    return {
+        "is_question": is_question,
+        "question_type": question_type,
+        "availability_query": availability_query,
+        "help_request": help_request,
+        "invitation": invitation,
+        "task_request": task_request,
+        "image_reference": image_reference,
+        "reality_state_query": reality_state_query,
+        "question_mark": has_mark,
+        "question_hint": has_question_hint,
+    }
+
+
 def _features_for_text(text: str) -> Dict[str, Any]:
+    intent = detect_message_intent(text)
     return {
         "char_length": len(text),
         "length_bucket": _bucket_length(len(text)),
         "emoji_count": len(EMOJI_RE.findall(text)),
-        "has_question": "?" in text or "？" in text,
+        "has_question": intent["is_question"],
         "has_exclamation": "!" in text or "！" in text,
         "has_ellipsis": "..." in text or "…" in text,
         "has_url": bool(URL_RE.search(text)),
         "line_count": max(1, text.count("\n") + 1),
+        "intent": intent,
     }
 
 
@@ -236,10 +316,57 @@ def _text_ngrams(text: str, n: int = 2) -> set[str]:
     return {compact[i:i + n] for i in range(0, len(compact) - n + 1)}
 
 
+def _keyword_tokens(text: str) -> set[str]:
+    compact = re.sub(r"\s+", "", str(text or "").lower())
+    tokens = set(re.findall(r"[a-z0-9_]{2,}", compact))
+    chinese = re.findall(r"[\u4e00-\u9fff]+", compact)
+    for chunk in chinese:
+        if len(chunk) <= 2:
+            tokens.add(chunk)
+            continue
+        tokens.update(chunk[i:i + 2] for i in range(len(chunk) - 1))
+        tokens.update(chunk[i:i + 3] for i in range(len(chunk) - 2))
+    intent = detect_message_intent(compact)
+    for key in (
+        "question_type",
+        "availability_query",
+        "help_request",
+        "invitation",
+        "task_request",
+        "image_reference",
+        "reality_state_query",
+    ):
+        value = intent.get(key)
+        if value:
+            if key == "question_type" and value == "statement":
+                continue
+            tokens.add(f"intent:{key}:{value}" if isinstance(value, str) else f"intent:{key}")
+    return {token for token in tokens if token}
+
+
 def _jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / max(1, len(left | right))
+
+
+def _intent_similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    score = 0.0
+    if left.get("is_question") and right.get("is_question"):
+        score += 0.03
+    if left.get("question_type") == right.get("question_type") and left.get("question_type") != "statement":
+        score += 0.08
+    for key in (
+        "availability_query",
+        "help_request",
+        "invitation",
+        "task_request",
+        "image_reference",
+        "reality_state_query",
+    ):
+        if left.get(key) and right.get(key):
+            score += 0.05
+    return min(score, 0.28)
 
 
 def _time_bucket(timestamp: int) -> str:
@@ -1407,6 +1534,8 @@ def retrieve_similar_style_samples(
     run_path, catalog, samples = _resolve_run_paths(run_dir)
     query_features = _features_for_text(query_text)
     query_ngrams = _text_ngrams(query_text)
+    query_keywords = _keyword_tokens(query_text)
+    query_intent = query_features.get("intent") or detect_message_intent(query_text)
     cache: Dict[str, List[Dict[str, Any]]] = {}
     results = []
 
@@ -1432,7 +1561,10 @@ def retrieve_similar_style_samples(
             continue
         context_text = "\n".join(context_texts[-3:])
         overlap = _jaccard(query_ngrams, _text_ngrams(context_text))
-        if overlap <= 0:
+        keyword_overlap = _jaccard(query_keywords, _keyword_tokens(context_text))
+        context_intent = detect_message_intent(context_text)
+        intent_bonus = _intent_similarity(query_intent, context_intent)
+        if overlap <= 0 and keyword_overlap <= 0 and intent_bonus <= 0:
             continue
         reply = sample.get("reply") or {}
         feature_bonus = 0.0
@@ -1440,17 +1572,33 @@ def retrieve_similar_style_samples(
             feature_bonus += 0.04
         if query_features["length_bucket"] == reply.get("length_bucket"):
             feature_bonus += 0.03
+        chat_type_bonus = 0.0
         if preferred_chat_type and sample.get("chat_type") == preferred_chat_type:
-            feature_bonus += 0.02
+            chat_type_bonus += 0.04
+        source_bonus = 0.0
         if preferred_source_file_id and source_file_id == preferred_source_file_id:
-            feature_bonus += 0.08
-        total_score = round(overlap + feature_bonus + (int(sample.get("score") or 0) / 1000), 4)
+            source_bonus += 0.1
+        quality_bonus = int(sample.get("score") or 0) / 1000
+        total_score = round(
+            (overlap * 0.58)
+            + (keyword_overlap * 0.28)
+            + intent_bonus
+            + feature_bonus
+            + chat_type_bonus
+            + source_bonus
+            + quality_bonus,
+            4,
+        )
         results.append({
             "sample_id": sample.get("sample_id"),
             "source_file_id": source_file_id,
             "chat_type": sample.get("chat_type"),
             "similarity": total_score,
             "context_overlap": round(overlap, 4),
+            "keyword_overlap": round(keyword_overlap, 4),
+            "intent_bonus": round(intent_bonus, 4),
+            "chat_type_bonus": round(chat_type_bonus, 4),
+            "source_bonus": round(source_bonus, 4),
             "quality_score": int(sample.get("score") or 0),
             "reply_length_bucket": reply.get("length_bucket"),
             "reply_char_length": reply.get("char_length"),
@@ -1470,6 +1618,7 @@ def retrieve_similar_style_samples(
             "has_question": query_features["has_question"],
             "has_exclamation": query_features["has_exclamation"],
             "has_ellipsis": query_features["has_ellipsis"],
+            "intent": query_intent,
         },
         "result_count": min(len(results), max(0, int(limit))),
         "results": results[: max(0, int(limit))],
@@ -1630,7 +1779,16 @@ def _derive_generation_guidance(
     else:
         length_instruction = "可以稍微展开，但保持口语化"
 
-    if query_features.get("has_question"):
+    intent = query_features.get("intent") or {}
+    if intent.get("availability_query") or intent.get("reality_state_query"):
+        stance = "对方在问主人现实状态或可用性时，不要替主人确认忙闲、位置或进度；优先自然追问或模糊过渡。"
+    elif intent.get("help_request"):
+        stance = "对方在求助时，先接住请求；信息不足时让对方发具体内容或说明卡在哪一步。"
+    elif intent.get("invitation"):
+        stance = "对方在邀约时，不要直接承诺主人会去；优先用模糊过渡或确认细节。"
+    elif intent.get("task_request"):
+        stance = "对方在安排任务时，先确认收到或询问关键信息，不要编造已经完成。"
+    elif query_features.get("has_question"):
         stance = "对方在提问时，先自然回应；涉及现实状态或承诺时不要替主人确认。"
     elif query_features.get("has_exclamation"):
         stance = "对方情绪较强时，先短句接住语气，再给轻量回应。"
@@ -1644,6 +1802,15 @@ def _derive_generation_guidance(
         "dominant_relationship_labels": dict(labels.most_common(8)),
         "draft_policy": "draft_only_no_auto_send",
         "reality_policy": "do_not_invent_owner_state_or_commitments",
+        "intent_summary": {
+            "question_type": intent.get("question_type") or "unknown",
+            "availability_query": bool(intent.get("availability_query")),
+            "help_request": bool(intent.get("help_request")),
+            "invitation": bool(intent.get("invitation")),
+            "task_request": bool(intent.get("task_request")),
+            "image_reference": bool(intent.get("image_reference")),
+            "reality_state_query": bool(intent.get("reality_state_query")),
+        },
     }
 
 
@@ -1681,6 +1848,8 @@ def _build_raw_few_shot_examples(
     cache: Dict[str, List[Dict[str, Any]]] = {}
     examples = []
     for result in retrieval_results:
+        if _safe_float(result.get("similarity")) < MIN_RAW_FEWSHOT_SIMILARITY:
+            continue
         sample_id = str(result.get("sample_id") or "")
         sample = by_sample_id.get(sample_id)
         if not sample:
@@ -1706,8 +1875,8 @@ def _build_raw_few_shot_examples(
                 continue
             label = "主人" if role == "self" else "对方"
             context_lines.append({"role": label, "text": text})
-            if len(context_lines) >= 3:
-                break
+        if len(context_lines) > 3:
+            context_lines = context_lines[-3:]
 
         reply_ref = sample.get("reply") or {}
         reply_index = _safe_int(reply_ref.get("record_index"), -1)
@@ -1848,6 +2017,81 @@ def build_style_generation_context(
         "guidance": guidance,
         "few_shot_examples": raw_examples,
     }
+
+
+def format_style_debug_report(
+    query: str,
+    *,
+    run_dir: str | Path | None = None,
+    chat_type: str | None = None,
+    target_id: str | int | None = None,
+    limit: int = 5,
+) -> str:
+    """Build an owner-only debug report with visible raw historical snippets."""
+    context = build_style_generation_context(
+        query,
+        run_dir=run_dir,
+        limit=limit,
+        chat_type=chat_type,
+        target_id=target_id,
+        include_raw_fewshot=True,
+        raw_fewshot_limit=min(5, max(1, int(limit))),
+    )
+    if not context.get("ok"):
+        return str(context.get("message") or "风格调试失败。")
+
+    features = context.get("query_features") or {}
+    intent = features.get("intent") or {}
+    mapping = context.get("target_mapping") or {}
+    guidance = context.get("guidance") or {}
+    lines = [
+        "Stage 5B-RAG 风格调试：",
+        f"- run_id：{context.get('run_id')}",
+        f"- readiness：{context.get('readiness')}",
+        f"- 当前对象映射：{'已匹配 ' + str(mapping.get('source_file_id')) if mapping.get('matched') else '未匹配'} ({mapping.get('chat_type') or chat_type or 'unknown'})",
+        f"- 问句：{features.get('has_question')}；类型：{intent.get('question_type')}",
+        (
+            "- 意图："
+            f"可用性/现实={bool(intent.get('availability_query') or intent.get('reality_state_query'))}，"
+            f"求助={bool(intent.get('help_request'))}，"
+            f"邀约={bool(intent.get('invitation'))}，"
+            f"任务={bool(intent.get('task_request'))}，"
+            f"图片={bool(intent.get('image_reference'))}"
+        ),
+        f"- 策略：{guidance.get('stance_instruction')}",
+        f"- 长度：{guidance.get('length_instruction')}，目标约 {guidance.get('target_reply_length')} 字",
+    ]
+
+    samples = context.get("similar_samples") or []
+    if samples:
+        lines.append("相似样本：")
+        for index, item in enumerate(samples[:limit], start=1):
+            lines.append(
+                f"{index}. sim={item.get('similarity')} text={item.get('context_overlap')} "
+                f"kw={item.get('keyword_overlap')} intent={item.get('intent_bonus')} "
+                f"q={item.get('quality_score')} {item.get('chat_type')} "
+                f"{item.get('source_file_id')} reply_len={item.get('reply_char_length')}"
+            )
+    else:
+        lines.append("相似样本：无。")
+
+    examples = context.get("few_shot_examples") or []
+    if examples:
+        lines.append("真实历史样本（owner 私聊调试可见；凭据类文本已跳过）：")
+        for index, example in enumerate(examples[:limit], start=1):
+            lines.append(
+                f"样本 {index}：sim={example.get('similarity')} q={example.get('quality_score')} "
+                f"{example.get('chat_type')} {example.get('source_file_id')}"
+            )
+            for item in example.get("context") or []:
+                role = item.get("role") or "对方"
+                lines.append(f"- {role}：{item.get('text')}")
+            lines.append(f"- 主人：{example.get('owner_reply')}")
+    else:
+        lines.append(
+            f"真实历史样本：无。可能是相似度低于 {MIN_RAW_FEWSHOT_SIMILARITY}，或命中样本含凭据/无可用文本。"
+        )
+    return "\n".join(lines)
 
 
 def format_similar_sample_results(result: Dict[str, Any]) -> str:

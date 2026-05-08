@@ -63,6 +63,7 @@ from .style_profile import (
 from .style_distill import (
     format_qce_distillation_result,
     format_similar_sample_results,
+    format_style_debug_report,
     format_style_evaluation_report,
     format_style_relationship_report,
     format_style_scene_report,
@@ -1652,6 +1653,24 @@ async def handle_style_command(
         except Exception as e:
             write_runtime_error("handle_style_retrieve", e)
             await send_qq_text(bot, event, f"相似样本检索失败：{type(e).__name__}")
+        return
+
+    if action == "debug":
+        if not payload.strip():
+            await send_qq_text(bot, event, "用法：/风格 调试 <当前对方消息>")
+            return
+        try:
+            report = await asyncio.to_thread(
+                format_style_debug_report,
+                payload,
+                chat_type="private",
+                target_id=event.user_id,
+            )
+            for part in split_qq_msg(report):
+                await send_qq_text(bot, event, part)
+        except Exception as e:
+            write_runtime_error("handle_style_debug", e)
+            await send_qq_text(bot, event, f"风格调试失败：{type(e).__name__}")
         return
 
     if action == "raw_fewshot":

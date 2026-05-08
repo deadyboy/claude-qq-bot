@@ -54,7 +54,9 @@ from src.plugins.claude.style_profile import (
 )
 from src.plugins.claude.style_distill import (
     build_style_generation_context,
+    detect_message_intent,
     find_source_for_target,
+    format_style_debug_report,
     format_style_evaluation_report,
     retrieve_similar_style_samples,
     run_qce_style_distillation,
@@ -321,11 +323,17 @@ async def test_style_profile():
         assert parse_style_command("/风格 关系") == ("relationships", "")
         assert parse_style_command("/风格 场景") == ("scenes", "")
         assert parse_style_command("/风格 检索 样例问题") == ("retrieve", "样例问题")
+        assert parse_style_command("/风格 调试 你现在忙吗") == ("debug", "你现在忙吗")
         assert parse_style_command("/风格 原句 开") == ("raw_fewshot", "开")
         assert parse_style_command("/风格 自动回复 开") == ("auto_reply", "开")
         assert parse_style_command("/风格 清空样本 确认") == ("clear_examples", "确认")
         assert parse_style_draft_payload("用我的风格回复：样例问题") == "样例问题"
         assert parse_style_import_file_payload("chat.csv 我=owner,me") == ("chat.csv", ["owner", "me"])
+        assert detect_message_intent("你现在忙吗")["reality_state_query"]
+        assert detect_message_intent("在不在")["availability_query"]
+        assert detect_message_intent("你在哪")["is_question"]
+        assert detect_message_intent("这个怎么弄")["help_request"]
+        assert detect_message_intent("能不能帮我看下")["task_request"]
 
         txt_records = parse_chat_log_text(
             "owner: 05-08 01:00:11\n样例回复A\nfriend: 05-08 01:00:12\n样例问题A",
@@ -464,6 +472,26 @@ async def test_style_distill():
                     "id": "m5",
                     "seq": "5",
                     "timestamp": 1700000180,
+                    "sender": {"uin": "2000000002", "name": "friend"},
+                    "type": "type_1",
+                    "content": {"text": "这个怎么弄", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m6",
+                    "seq": "6",
+                    "timestamp": 1700000210,
+                    "sender": {"uin": "1000000001", "name": "owner"},
+                    "type": "type_1",
+                    "content": {"text": "发我看看", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m7",
+                    "seq": "7",
+                    "timestamp": 1700000240,
                     "sender": {"uin": "1000000001", "name": "owner"},
                     "type": "type_1",
                     "content": {"text": "我的 api key 是 sk-testsecret123456", "elements": [{"type": "text"}]},
@@ -486,7 +514,7 @@ async def test_style_distill():
             store=store,
         )
         assert result["ok"], result
-        assert result["owner_text_messages"] == 2
+        assert result["owner_text_messages"] == 3
         assert result["indexed_samples"] >= 1
 
         output_dir = Path(result["output_dir"])
@@ -496,7 +524,7 @@ async def test_style_distill():
         scene_text = (output_dir / "scene_profiles.json").read_text(encoding="utf-8")
         eval_text = (output_dir / "evaluation_report.json").read_text(encoding="utf-8")
         profile_text = store.profile_path().read_text(encoding="utf-8")
-        for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "api key", "sk-testsecret"):
+        for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "这个怎么弄", "发我看看", "api key", "sk-testsecret"):
             assert forbidden not in summary_text
             assert forbidden not in index_text
             assert forbidden not in relation_text
@@ -551,6 +579,39 @@ async def test_style_distill():
         raw_prompt_context = format_generation_context_for_prompt(raw_context)
         assert "真实历史 few-shot 样本" in raw_prompt_context
         assert "样例回复A" in raw_prompt_context
+
+        help_context = build_style_generation_context(
+            "这个怎么弄",
+            run_dir=output_dir,
+            chat_type="private",
+            target_id="2000000002",
+            include_raw_fewshot=True,
+        )
+        assert help_context["query_features"]["intent"]["help_request"]
+        assert help_context["guidance"]["intent_summary"]["help_request"]
+        help_text = json.dumps(help_context, ensure_ascii=False)
+        assert "这个怎么弄" in help_text
+        assert "发我看看" in help_text
+
+        debug_report = format_style_debug_report(
+            "这个怎么弄",
+            run_dir=output_dir,
+            chat_type="private",
+            target_id="2000000002",
+        )
+        assert "Stage 5B-RAG 风格调试" in debug_report
+        assert "这个怎么弄" in debug_report
+        assert "发我看看" in debug_report
+        assert "sk-testsecret" not in debug_report
+
+        low_context = build_style_generation_context(
+            "zzzzzzzzzz",
+            run_dir=output_dir,
+            chat_type="private",
+            include_raw_fewshot=True,
+        )
+        assert low_context["ok"], low_context
+        assert not low_context["raw_fewshot_included"]
 
         prompt = build_style_system_prompt(store.load(), generation_context)
         assert "Stage 5B 生成上下文" in prompt
