@@ -770,6 +770,7 @@ def format_style_profile(profile: Dict[str, Any]) -> str:
     avoid = data.get("avoid") or []
     examples = data.get("examples") or []
     imports = data.get("source_imports") or []
+    offline_runs = data.get("offline_distillations") or []
     stats = data.get("stats") or {}
     common_phrases = data.get("common_phrases") or []
     lines.append(f"- 习惯：{'；'.join(habits) if habits else '未设置'}")
@@ -781,7 +782,13 @@ def format_style_profile(profile: Dict[str, Any]) -> str:
             f"- 蒸馏统计：{stats.get('sample_count', 0)} 条样本，"
             f"平均 {stats.get('avg_length', 0)} 字"
         )
+        if stats.get("candidate_reply_pairs") is not None:
+            lines.append(
+                f"- Stage 5B：候选 {stats.get('candidate_reply_pairs', 0)} 条，"
+                f"索引 {stats.get('indexed_samples', 0)} 条"
+            )
     lines.append(f"- 文件导入：{len(imports)} 个")
+    lines.append(f"- 离线蒸馏：{len(offline_runs)} 次")
     lines.append(f"- 样本数：{len(examples)}")
 
     for index, example in enumerate(examples[-3:], start=max(1, len(examples) - 2)):
@@ -816,6 +823,7 @@ def parse_style_command(text: str) -> tuple[str, str]:
         "import_file": ("导入文件", "文件导入", "import-file", "importfile", "file"),
         "confirm_import": ("确认导入", "confirm-import", "confirm import"),
         "distill": ("蒸馏", "重建", "distill", "rebuild"),
+        "offline_distill": ("离线蒸馏", "qce蒸馏", "qce 蒸馏", "offline-distill", "offline distill"),
         "clear_examples": ("清空样本", "clear examples"),
         "help": ("帮助", "help"),
     }
@@ -871,6 +879,7 @@ def format_style_help() -> str:
         "- /风格 导入文件 <文件名> 我=<你的昵称或QQ>：文件需放在 data/style_profiles/import_inbox/",
         "- /风格 确认导入 <import_id>：确认预览并写入画像",
         "- /风格 蒸馏：从已导入样本更新画像摘要",
+        "- /风格 离线蒸馏：从 F 盘 QCE JSON 离线生成 Stage 5B 摘要和样本索引",
         "- /风格 清空样本 确认：删除已导入样本",
         "- /用我的风格回复：<对方消息>：生成一条草稿，不会代替你发送",
     ])

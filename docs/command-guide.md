@@ -448,6 +448,27 @@ data/style_profiles/import_inbox/
 - 当前主要用于直接 `/风格 导入 <sample>` 的小样本重建。
 - 批量文件导入已经在确认导入时写入本地蒸馏摘要。
 
+### `/风格 离线蒸馏`
+
+从 F 盘 QCE JSON 导出目录运行 Stage 5B 离线蒸馏，生成风格摘要和高质量样本索引。
+
+用法：
+
+```text
+/风格 离线蒸馏
+/风格 离线蒸馏 F:\ClaudeSpace2\qq-chat-exports\main_1030400950_20260509\distill-json\recent_51_text
+```
+
+说明：
+
+- Owner-only、Private-only。
+- 默认输入目录是主 QQ 最近 51 会话 JSON 导出。
+- 输出目录默认在对应导出批次的 `distill-runs/` 下。
+- 摘要和样本索引不保存聊天正文。
+- 样本索引只保存 `source_file_id`、记录序号、消息 ID hash、时间桶、长度、元素类型、质量分等元数据。
+- 为本地复现保留 `source_catalog_private.json`，其中只映射源文件，不保存聊天正文。
+- 命令执行可能较慢，建议长批次由 Codex 旁路监控 QCE/NapCat 状态。
+
 ### `/风格 清空样本`
 
 清空手动导入的小样本。
@@ -513,7 +534,7 @@ data/style_profiles/import_inbox/
 计划：
 
 - 重构更细的 style profile 字段。
-- 从聊天记录构建“对方上一句/上下文 -> 主人真实回复”的评估集。
+- 从聊天记录构建“对方上一句/上下文 -> 主人真实回复”的样本索引。
 - 增加 `/风格 评估`。
 - 优化常见表达提取，去掉泛词。
 - 区分全局风格和不同联系人/群的关系特定风格。

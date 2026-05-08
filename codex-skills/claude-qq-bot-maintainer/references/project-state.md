@@ -154,8 +154,15 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
 
 ### Stage 5B: Distillation Quality and Evaluation
 
+- Added `src/plugins/claude/style_distill.py` for offline QCE JSON distillation.
+- Added `/风格 离线蒸馏` as an owner-only, private-only Stage 5B entry point.
+- Builds high-quality sample indexes from chat logs: previous message/context plus the owner's real reply.
+- Stores only aggregate style summaries and message-id based sample indexes; no raw chat text is persisted in the summary or index.
+- Updates `data/style_profiles/default.json` with a conservative style-profile patch and offline run metadata.
+
+Still planned:
+
 - Redesign style-profile fields for stronger imitation beyond draft replies.
-- Build evaluation pairs from chat logs: previous message/context plus the owner's real reply.
 - Add `/风格 评估` to compare generated replies against real historical replies.
 - Improve phrase extraction to avoid generic words.
 - Separate global owner style from relationship-specific style.

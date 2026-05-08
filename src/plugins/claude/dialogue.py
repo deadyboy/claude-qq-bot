@@ -53,6 +53,7 @@ from .style_profile import (
     parse_style_set_payload,
     style_store,
 )
+from .style_distill import format_qce_distillation_result, run_qce_style_distillation
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -1344,6 +1345,20 @@ async def handle_style_command(
     if action == "distill":
         _, msg = style_store.distill()
         await send_qq_text(bot, event, msg)
+        return
+
+    if action == "offline_distill":
+        await send_qq_text(
+            bot,
+            event,
+            "开始 Stage 5B 离线蒸馏。只会写入统计摘要和样本索引，不保存聊天正文；数据量大时可能需要较久。",
+        )
+        try:
+            result = await asyncio.to_thread(run_qce_style_distillation, payload or None)
+            await send_qq_text(bot, event, format_qce_distillation_result(result))
+        except Exception as e:
+            write_runtime_error("handle_style_offline_distill", e)
+            await send_qq_text(bot, event, f"离线蒸馏失败：{type(e).__name__}")
         return
 
     if action == "clear_examples":

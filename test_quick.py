@@ -3,6 +3,7 @@
 
 import sys
 import asyncio
+import json
 import uuid
 from pathlib import Path
 
@@ -49,12 +50,13 @@ from src.plugins.claude.style_profile import (
     parse_style_import_file_payload,
     parse_style_set_payload,
 )
+from src.plugins.claude.style_distill import run_qce_style_distillation
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/7] 测试短期记忆...")
+    print("[1/8] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -76,7 +78,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/7] 测试关键事实...")
+    print("[2/8] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -118,7 +120,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/7] 测试自动记忆规则...")
+    print("[3/8] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -145,7 +147,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/7] 测试低风险工具...")
+    print("[4/8] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -186,7 +188,7 @@ async def test_safe_tools():
 
 async def test_permissions():
     """测试 owner 权限辅助函数。"""
-    print("[5/7] 测试权限辅助函数...")
+    print("[5/8] 测试权限辅助函数...")
 
     owner_ids = parse_owner_ids("123, 456；789  100")
     assert owner_ids == {"123", "456", "789", "100"}
@@ -253,7 +255,7 @@ async def test_permissions():
 
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
-    print("[6/7] 测试风格画像...")
+    print("[6/8] 测试风格画像...")
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
     try:
@@ -357,9 +359,118 @@ async def test_style_profile():
     print("      通过")
     return True
 
+async def test_style_distill():
+    """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
+    print("[7/8] 测试 Stage 5B 离线蒸馏...")
+
+    root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
+    input_dir = root / "input"
+    output_root = root / "runs"
+    store = StyleProfileStore(Path("data") / f"style_profiles_distill_test_{RUN_ID}")
+    try:
+        input_dir.mkdir(parents=True, exist_ok=True)
+        sample_export = {
+            "chatInfo": {
+                "name": "private_test",
+                "type": "private",
+                "selfUin": "1030400950",
+                "selfName": "36",
+            },
+            "messages": [
+                {
+                    "id": "m1",
+                    "seq": "1",
+                    "timestamp": 1700000000,
+                    "sender": {"uin": "200", "name": "friend"},
+                    "type": "type_1",
+                    "content": {"text": "你现在忙不忙", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m2",
+                    "seq": "2",
+                    "timestamp": 1700000030,
+                    "sender": {"uin": "1030400950", "name": "36"},
+                    "type": "type_1",
+                    "content": {"text": "咋了", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m3",
+                    "seq": "3",
+                    "timestamp": 1700000060,
+                    "sender": {"uin": "200", "name": "friend"},
+                    "type": "type_1",
+                    "content": {"text": "这个怎么弄", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m4",
+                    "seq": "4",
+                    "timestamp": 1700000120,
+                    "sender": {"uin": "1030400950", "name": "36"},
+                    "type": "type_1",
+                    "content": {"text": "我看看", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "m5",
+                    "seq": "5",
+                    "timestamp": 1700000180,
+                    "sender": {"uin": "1030400950", "name": "36"},
+                    "type": "type_1",
+                    "content": {"text": "我的 api key 是 sk-testsecret123456", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+            ],
+        }
+        (input_dir / "private_example.json").write_text(
+            json.dumps(sample_export, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = run_qce_style_distillation(
+            input_dir=input_dir,
+            output_root=output_root,
+            self_uin="1030400950",
+            max_index_samples=10,
+            apply_to_profile=True,
+            store=store,
+        )
+        assert result["ok"], result
+        assert result["owner_text_messages"] == 2
+        assert result["indexed_samples"] >= 1
+
+        output_dir = Path(result["output_dir"])
+        summary_text = (output_dir / "style_profile_summary.json").read_text(encoding="utf-8")
+        index_text = (output_dir / "sample_index.jsonl").read_text(encoding="utf-8")
+        profile_text = store.profile_path().read_text(encoding="utf-8")
+        for forbidden in ("你现在忙不忙", "这个怎么弄", "咋了", "我看看", "api key", "sk-testsecret"):
+            assert forbidden not in summary_text
+            assert forbidden not in index_text
+            assert forbidden not in profile_text
+
+        profile = store.load()
+        assert profile["stats"]["source"] == "qce_offline_stage5b"
+        assert profile.get("offline_distillations")
+        assert "examples" in profile and profile["examples"] == []
+    finally:
+        store.delete_for_tests()
+        if root.exists():
+            import shutil
+            shutil.rmtree(root)
+
+    print("      通过")
+    return True
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[7/7] 测试统一记忆管理器...")
+    print("[8/8] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -460,6 +571,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("风格画像", False))
+
+    try:
+        results.append(("Stage 5B 离线蒸馏", await test_style_distill()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("Stage 5B 离线蒸馏", False))
 
     try:
         results.append(("统一记忆", await test_unified()))
