@@ -33,6 +33,7 @@ MAX_CONTEXT_MESSAGES = 8
 CONTEXT_WINDOW_SECONDS = 30 * 60
 MAX_RELATIONSHIP_PROFILES = 500
 DEFAULT_RETRIEVAL_LIMIT = 6
+DEFAULT_GENERATION_CONTEXT_LIMIT = 5
 
 TEXT_PLACEHOLDER_RE = re.compile(r"^\s*\[(?:图片|视频|语音|表情|文件|动画表情|转发消息).*\]\s*$")
 URL_RE = re.compile(r"https?://|www\.", flags=re.I)
@@ -1236,6 +1237,20 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def format_style_evaluation_report(run_dir: str | Path | None = None) -> str:
     """Format the latest Stage 5B readiness report without raw text."""
     run_path = find_latest_distill_run(run_dir)
@@ -1390,6 +1405,242 @@ def retrieve_similar_style_samples(
         },
         "result_count": min(len(results), max(0, int(limit))),
         "results": results[: max(0, int(limit))],
+    }
+
+
+def _select_relationship_profiles(
+    relationship_data: Dict[str, Any],
+    retrieval_results: Sequence[Dict[str, Any]],
+    limit: int = 3,
+) -> List[Dict[str, Any]]:
+    profiles = relationship_data.get("profiles") or []
+    by_source = {
+        str(item.get("source_file_id") or ""): item
+        for item in profiles
+        if isinstance(item, dict)
+    }
+    selected = []
+    seen = set()
+    for result in retrieval_results:
+        source_file_id = str(result.get("source_file_id") or "")
+        item = by_source.get(source_file_id)
+        if not item or source_file_id in seen:
+            continue
+        seen.add(source_file_id)
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+
+    if len(selected) < limit:
+        for item in profiles:
+            source_file_id = str(item.get("source_file_id") or "")
+            if not source_file_id or source_file_id in seen:
+                continue
+            selected.append(item)
+            seen.add(source_file_id)
+            if len(selected) >= limit:
+                break
+
+    sanitized = []
+    for item in selected:
+        sanitized.append({
+            "source_file_id": item.get("source_file_id"),
+            "chat_type": item.get("chat_type"),
+            "owner_text_messages": _safe_int(item.get("owner_text_messages")),
+            "candidate_samples": _safe_int(item.get("candidate_samples")),
+            "avg_length": _safe_float(item.get("avg_length")),
+            "median_length": _safe_int(item.get("median_length")),
+            "labels": list(item.get("labels") or [])[:8],
+            "length_buckets": dict(item.get("length_buckets") or {}),
+            "element_types": dict(item.get("element_types") or {}),
+        })
+    return sanitized
+
+
+def _scene_match_score(
+    scene: Dict[str, Any],
+    *,
+    preferred_chat_type: str,
+    preferred_length_bucket: str,
+    query_features: Dict[str, Any],
+) -> float:
+    score = _safe_int(scene.get("sample_count")) * 0.01 + _safe_float(scene.get("avg_score")) * 0.01
+    scene_id = str(scene.get("scene_id") or "")
+    chat_types = scene.get("chat_types") or {}
+    length_buckets = scene.get("length_buckets") or {}
+    if preferred_chat_type and _safe_int(chat_types.get(preferred_chat_type)) > 0:
+        score += 2.0
+    if preferred_length_bucket and _safe_int(length_buckets.get(preferred_length_bucket)) > 0:
+        score += 1.5
+    if query_features.get("has_question") and "question_reply" in scene_id:
+        score += 0.4
+    if query_features.get("has_exclamation") and "emotional_reply" in scene_id:
+        score += 0.4
+    if query_features.get("has_ellipsis") and "pause_reply" in scene_id:
+        score += 0.4
+    return score
+
+
+def _select_scene_profiles(
+    scene_data: Dict[str, Any],
+    retrieval_results: Sequence[Dict[str, Any]],
+    query_features: Dict[str, Any],
+    *,
+    chat_type: str | None = None,
+    limit: int = 3,
+) -> List[Dict[str, Any]]:
+    profiles = [
+        item for item in (scene_data.get("profiles") or [])
+        if isinstance(item, dict)
+    ]
+    if not profiles:
+        return []
+
+    top_result = retrieval_results[0] if retrieval_results else {}
+    preferred_chat_type = str(chat_type or top_result.get("chat_type") or "private")
+    preferred_length_bucket = str(top_result.get("reply_length_bucket") or query_features.get("length_bucket") or "")
+    ranked = sorted(
+        profiles,
+        key=lambda item: _scene_match_score(
+            item,
+            preferred_chat_type=preferred_chat_type,
+            preferred_length_bucket=preferred_length_bucket,
+            query_features=query_features,
+        ),
+        reverse=True,
+    )
+
+    selected = []
+    for item in ranked[:limit]:
+        selected.append({
+            "scene_id": item.get("scene_id"),
+            "sample_count": _safe_int(item.get("sample_count")),
+            "chat_types": dict(item.get("chat_types") or {}),
+            "length_buckets": dict(item.get("length_buckets") or {}),
+            "avg_reply_length": _safe_float(item.get("avg_reply_length")),
+            "quick_reply_ratio": _safe_float(item.get("quick_reply_ratio")),
+            "question_ratio": _safe_float(item.get("question_ratio")),
+            "exclamation_ratio": _safe_float(item.get("exclamation_ratio")),
+            "ellipsis_ratio": _safe_float(item.get("ellipsis_ratio")),
+            "recommended_style": str(item.get("recommended_style") or ""),
+        })
+    return selected
+
+
+def _derive_generation_guidance(
+    query_features: Dict[str, Any],
+    retrieval_results: Sequence[Dict[str, Any]],
+    scene_profiles: Sequence[Dict[str, Any]],
+    relationship_profiles: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    reply_lengths = [
+        _safe_int(item.get("reply_char_length"))
+        for item in retrieval_results
+        if _safe_int(item.get("reply_char_length")) > 0
+    ]
+    if not reply_lengths:
+        reply_lengths = [
+            round(_safe_float(item.get("avg_reply_length")))
+            for item in scene_profiles
+            if _safe_float(item.get("avg_reply_length")) > 0
+        ]
+    if reply_lengths:
+        target_length = round(sum(reply_lengths[:5]) / min(5, len(reply_lengths)), 1)
+    else:
+        target_length = max(6, min(30, _safe_int(query_features.get("char_length"), 12)))
+
+    labels = Counter()
+    for item in relationship_profiles:
+        labels.update(item.get("labels") or [])
+
+    if target_length <= 8:
+        length_instruction = "优先 3-8 字短回复"
+    elif target_length <= 18:
+        length_instruction = "优先 8-18 字中短回复"
+    elif target_length <= 40:
+        length_instruction = "优先 15-40 字，给一点上下文"
+    else:
+        length_instruction = "可以稍微展开，但保持口语化"
+
+    if query_features.get("has_question"):
+        stance = "对方在提问时，先自然回应；涉及现实状态或承诺时不要替主人确认。"
+    elif query_features.get("has_exclamation"):
+        stance = "对方情绪较强时，先短句接住语气，再给轻量回应。"
+    else:
+        stance = "普通消息优先自然短句，不要过度解释。"
+
+    return {
+        "target_reply_length": target_length,
+        "length_instruction": length_instruction,
+        "stance_instruction": stance,
+        "dominant_relationship_labels": dict(labels.most_common(8)),
+        "draft_policy": "draft_only_no_auto_send",
+        "reality_policy": "do_not_invent_owner_state_or_commitments",
+    }
+
+
+def build_style_generation_context(
+    query: str,
+    *,
+    run_dir: str | Path | None = None,
+    limit: int = DEFAULT_GENERATION_CONTEXT_LIMIT,
+    chat_type: str | None = None,
+) -> Dict[str, Any]:
+    """Build a no-raw-text Stage 5B context for style draft generation."""
+    query_text = query.strip()
+    if not query_text:
+        return {"ok": False, "message": "用法：/用我的风格回复：<对方消息>"}
+
+    try:
+        run_path = find_latest_distill_run(run_dir)
+        if run_path is None:
+            raise FileNotFoundError("还没有找到 Stage 5B 离线蒸馏结果。")
+        retrieval = retrieve_similar_style_samples(query_text, run_dir=run_path, limit=limit)
+        relationship_path = run_path / "relationship_profiles.json"
+        scene_path = run_path / "scene_profiles.json"
+        evaluation_path = run_path / "evaluation_report.json"
+        relationships = _load_json(relationship_path) if relationship_path.exists() else {}
+        scenes = _load_json(scene_path) if scene_path.exists() else {}
+        evaluation = _load_json(evaluation_path) if evaluation_path.exists() else {}
+    except Exception as e:
+        return {
+            "ok": False,
+            "message": f"Stage 5B 生成上下文不可用：{type(e).__name__}",
+            "raw_text_policy": "No raw historical text is returned.",
+        }
+
+    if not retrieval.get("ok"):
+        return retrieval
+
+    retrieval_results = list(retrieval.get("results") or [])
+    query_features = retrieval.get("query_features") or _features_for_text(query_text)
+    relationship_profiles = _select_relationship_profiles(relationships, retrieval_results)
+    scene_profiles = _select_scene_profiles(
+        scenes,
+        retrieval_results,
+        query_features,
+        chat_type=chat_type,
+    )
+    guidance = _derive_generation_guidance(
+        query_features,
+        retrieval_results,
+        scene_profiles,
+        relationship_profiles,
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_path.name,
+        "readiness": evaluation.get("readiness") or "unknown",
+        "raw_text_policy": (
+            "Historical text may be read locally for similarity scoring, but this generation context "
+            "contains no raw historical chat text."
+        ),
+        "query_features": query_features,
+        "similar_samples": retrieval_results,
+        "relationship_profiles": relationship_profiles,
+        "scene_profiles": scene_profiles,
+        "guidance": guidance,
     }
 
 

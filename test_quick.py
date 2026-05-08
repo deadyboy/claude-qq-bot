@@ -43,6 +43,7 @@ from src.plugins.claude.permissions import (
 from src.plugins.claude.style_profile import (
     StyleProfileStore,
     build_style_system_prompt,
+    format_generation_context_for_prompt,
     format_style_profile,
     parse_chat_log_text,
     parse_style_command,
@@ -51,6 +52,7 @@ from src.plugins.claude.style_profile import (
     parse_style_set_payload,
 )
 from src.plugins.claude.style_distill import (
+    build_style_generation_context,
     format_style_evaluation_report,
     retrieve_similar_style_samples,
     run_qce_style_distillation,
@@ -484,6 +486,23 @@ async def test_style_distill():
         retrieval_text = json.dumps(retrieval, ensure_ascii=False)
         assert "样例问题A" not in retrieval_text
         assert "样例回复A" not in retrieval_text
+
+        generation_context = build_style_generation_context("样例问题", run_dir=output_dir)
+        assert generation_context["ok"], generation_context
+        assert generation_context["similar_samples"]
+        context_text = json.dumps(generation_context, ensure_ascii=False)
+        prompt_context = format_generation_context_for_prompt(generation_context)
+        assert "Stage 5B 生成上下文" in prompt_context
+        assert "样例问题A" not in context_text
+        assert "样例回复A" not in context_text
+        assert "样例问题A" not in prompt_context
+        assert "样例回复A" not in prompt_context
+
+        prompt = build_style_system_prompt(store.load(), generation_context)
+        assert "Stage 5B 生成上下文" in prompt
+        assert "相似历史样本索引摘要" in prompt
+        assert "关系/来源画像摘要" in prompt
+        assert "场景画像摘要" in prompt
     finally:
         store.delete_for_tests()
         if root.exists():

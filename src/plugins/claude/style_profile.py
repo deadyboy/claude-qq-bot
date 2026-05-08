@@ -1,5 +1,6 @@
 """Owner style profile storage and draft generation."""
 
+import asyncio
 import csv
 import hashlib
 import json
@@ -883,17 +884,85 @@ def format_style_help() -> str:
         "- /风格 导入文件 <文件名> 我=<你的昵称或QQ>：文件需放在 data/style_profiles/import_inbox/",
         "- /风格 确认导入 <import_id>：确认预览并写入画像",
         "- /风格 蒸馏：从已导入样本更新画像摘要",
-        "- /风格 离线蒸馏：从 F 盘 QCE JSON 离线生成 Stage 5B 摘要和样本索引",
+        "- /风格 离线蒸馏：从 QCE JSON 离线生成 Stage 5B 摘要和样本索引",
         "- /风格 评估：查看 Stage 5B 数据就绪度和评估摘要",
         "- /风格 关系：查看关系/场景来源画像摘要",
         "- /风格 场景：查看场景画像摘要",
         "- /风格 检索 <当前对方消息>：本地检索相似历史样本索引，不返回历史原文",
         "- /风格 清空样本 确认：删除已导入样本",
-        "- /用我的风格回复：<对方消息>：生成一条草稿，不会代替你发送",
+        "- /用我的风格回复：<对方消息>：生成一条草稿；若有 Stage 5B 结果，会接入检索/关系/场景元数据",
     ])
 
 
-def build_style_system_prompt(profile: Dict[str, Any]) -> str:
+def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
+    """Format Stage 5B metadata for the draft prompt without raw history text."""
+    if not context or not context.get("ok"):
+        return ""
+
+    lines = [
+        "Stage 5B 生成上下文（只含统计/索引元数据，不含历史聊天原文）：",
+        f"- run_id：{context.get('run_id')}",
+        f"- 数据就绪度：{context.get('readiness')}",
+        "- 历史原文策略：不向模型提供历史原文；只使用相似度、长度、场景、关系标签等元数据。",
+    ]
+    guidance = context.get("guidance") or {}
+    if guidance:
+        lines.append("生成策略：")
+        if guidance.get("length_instruction"):
+            lines.append(f"- 长度：{guidance['length_instruction']}，目标约 {guidance.get('target_reply_length')} 字")
+        if guidance.get("stance_instruction"):
+            lines.append(f"- 应对方式：{guidance['stance_instruction']}")
+        if guidance.get("reality_policy"):
+            lines.append("- 现实状态：不要编造主人是否忙、在哪、是否完成、是否答应等事实。")
+
+    query_features = context.get("query_features") or {}
+    if query_features:
+        lines.append(
+            "- 当前消息特征："
+            f"长度桶={query_features.get('length_bucket')}，"
+            f"问句={query_features.get('has_question')}，"
+            f"感叹={query_features.get('has_exclamation')}，"
+            f"省略={query_features.get('has_ellipsis')}"
+        )
+
+    samples = context.get("similar_samples") or []
+    if samples:
+        lines.append("相似历史样本索引摘要：")
+        for index, item in enumerate(samples[:5], start=1):
+            lines.append(
+                f"- {index}. sim={item.get('similarity')} q={item.get('quality_score')} "
+                f"{item.get('chat_type')} reply_len={item.get('reply_char_length')} "
+                f"bucket={item.get('reply_length_bucket')} ctx={item.get('context_count')}"
+            )
+
+    relationships = context.get("relationship_profiles") or []
+    if relationships:
+        lines.append("关系/来源画像摘要：")
+        for item in relationships[:3]:
+            labels = "、".join((item.get("labels") or [])[:5])
+            lines.append(
+                f"- {item.get('chat_type')} owner_msgs={item.get('owner_text_messages')} "
+                f"samples={item.get('candidate_samples')} avg_len={item.get('avg_length')} "
+                f"labels={labels}"
+            )
+
+    scenes = context.get("scene_profiles") or []
+    if scenes:
+        lines.append("场景画像摘要：")
+        for item in scenes[:3]:
+            lines.append(
+                f"- {item.get('scene_id')} count={item.get('sample_count')} "
+                f"avg_len={item.get('avg_reply_length')} quick={item.get('quick_reply_ratio')} "
+                f"style={item.get('recommended_style')}"
+            )
+
+    return "\n".join(lines)
+
+
+def build_style_system_prompt(
+    profile: Dict[str, Any],
+    generation_context: Dict[str, Any] | None = None,
+) -> str:
     data = normalize_style_profile(profile)
     lines = [
         "你是一个回复草稿生成器，任务是模仿“主人”的日常聊天风格生成一条可复制的中文回复草稿。",
@@ -920,6 +989,9 @@ def build_style_system_prompt(profile: Dict[str, Any]) -> str:
         lines.append("主人真实回复样本，仅学习表达风格，不要照抄隐私内容：")
         for example in data["examples"][-5:]:
             lines.append(f"- {example['text']}")
+    context_prompt = format_generation_context_for_prompt(generation_context)
+    if context_prompt:
+        lines.append(context_prompt)
     return "\n".join(lines)
 
 
@@ -931,8 +1003,14 @@ async def generate_style_draft(message: str, store: StyleProfileStore = style_st
         return "对方消息太长。v1 先支持 1000 字以内的单条草稿。"
 
     profile = store.load()
+    generation_context = None
+    try:
+        from .style_distill import build_style_generation_context
+        generation_context = await asyncio.to_thread(build_style_generation_context, target)
+    except Exception:
+        generation_context = None
     return await llm_client.chat(
         messages=[{"role": "user", "content": f"对方消息：{target}"}],
-        system_prompt=build_style_system_prompt(profile),
+        system_prompt=build_style_system_prompt(profile, generation_context),
         temperature=0.6,
     )

@@ -166,13 +166,15 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
   - `/风格 场景`
   - `/风格 检索 <当前对方消息>`
 - Similar-sample retrieval reads local QCE JSON transiently and returns only sample ids/statistics, not raw historical text.
+- Added Stage 5B generation loop v1: `/用我的风格回复：...` now builds a no-raw-text generation context from the latest distillation run, including similar sample metadata, relationship/source labels, scene recommendations, and length guidance.
+- The generation loop does not send historical raw chat text to the model. Few-shot generation with true historical lines remains a separate future feature requiring explicit owner authorization and audit logging.
 
 Still planned:
 
 - Redesign style-profile fields for stronger imitation beyond draft replies.
 - Add true generation-vs-history evaluation after retrieval quality is stable.
 - Improve phrase extraction to avoid generic words.
-- Separate global owner style from relationship-specific style.
+- Map live contacts/groups to the correct relationship-specific style profile.
 
 ### Stage 6: Permission and Contact Whitelist
 
