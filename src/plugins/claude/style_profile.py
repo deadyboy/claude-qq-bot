@@ -824,6 +824,10 @@ def parse_style_command(text: str) -> tuple[str, str]:
         "confirm_import": ("确认导入", "confirm-import", "confirm import"),
         "distill": ("蒸馏", "重建", "distill", "rebuild"),
         "offline_distill": ("离线蒸馏", "qce蒸馏", "qce 蒸馏", "offline-distill", "offline distill"),
+        "evaluation": ("评估", "评价", "eval", "evaluate"),
+        "relationships": ("关系", "关系画像", "relationship", "relationships"),
+        "scenes": ("场景", "场景画像", "scene", "scenes"),
+        "retrieve": ("检索", "相似", "相似样本", "retrieve", "search"),
         "clear_examples": ("清空样本", "clear examples"),
         "help": ("帮助", "help"),
     }
@@ -880,6 +884,10 @@ def format_style_help() -> str:
         "- /风格 确认导入 <import_id>：确认预览并写入画像",
         "- /风格 蒸馏：从已导入样本更新画像摘要",
         "- /风格 离线蒸馏：从 F 盘 QCE JSON 离线生成 Stage 5B 摘要和样本索引",
+        "- /风格 评估：查看 Stage 5B 数据就绪度和评估摘要",
+        "- /风格 关系：查看关系/场景来源画像摘要",
+        "- /风格 场景：查看场景画像摘要",
+        "- /风格 检索 <当前对方消息>：本地检索相似历史样本索引，不返回历史原文",
         "- /风格 清空样本 确认：删除已导入样本",
         "- /用我的风格回复：<对方消息>：生成一条草稿，不会代替你发送",
     ])

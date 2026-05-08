@@ -407,7 +407,7 @@ data/style_profiles/import_inbox/
 
 ```text
 /风格 导入文件 最近联系人.txt 我=36
-/风格 导入文件 chat.csv 我=36,1030400950
+/风格 导入文件 chat.csv 我=你的昵称,你的QQ号
 ```
 
 说明：
@@ -450,24 +450,89 @@ data/style_profiles/import_inbox/
 
 ### `/风格 离线蒸馏`
 
-从 F 盘 QCE JSON 导出目录运行 Stage 5B 离线蒸馏，生成风格摘要和高质量样本索引。
+从 QCE JSON 导出目录运行 Stage 5B 离线蒸馏，生成风格摘要和高质量样本索引。
 
 用法：
 
 ```text
 /风格 离线蒸馏
-/风格 离线蒸馏 F:\ClaudeSpace2\qq-chat-exports\main_1030400950_20260509\distill-json\recent_51_text
+/风格 离线蒸馏 <QCE_JSON目录>
 ```
 
 说明：
 
 - Owner-only、Private-only。
-- 默认输入目录是主 QQ 最近 51 会话 JSON 导出。
+- 默认输入目录会从配置的 QCE 导出根目录中选择最近的 JSON 批次。
+- 可通过环境变量 `QQBOT_STYLE_QCE_INPUT_DIR`、`QQBOT_STYLE_EXPORT_ROOT`、`QQBOT_STYLE_SELF_UIN` 覆盖默认输入目录、导出根目录和本人 QQ。
 - 输出目录默认在对应导出批次的 `distill-runs/` 下。
 - 摘要和样本索引不保存聊天正文。
 - 样本索引只保存 `source_file_id`、记录序号、消息 ID hash、时间桶、长度、元素类型、质量分等元数据。
 - 为本地复现保留 `source_catalog_private.json`，其中只映射源文件，不保存聊天正文。
 - 命令执行可能较慢，建议长批次由 Codex 旁路监控 QCE/NapCat 状态。
+
+### `/风格 评估`
+
+查看最近一次 Stage 5B 离线蒸馏的就绪度、样本量、关系来源数量和风险建议。
+
+用法：
+
+```text
+/风格 评估
+```
+
+说明：
+
+- Owner-only、Private-only。
+- 只读取 `evaluation_report.json`。
+- 不显示历史上下文、真实回复正文、联系人、群名或 QQ。
+
+### `/风格 关系`
+
+查看关系/场景来源画像摘要，例如私聊/群聊数量、强样本源数量、低证据来源数量和标签分布。
+
+用法：
+
+```text
+/风格 关系
+```
+
+说明：
+
+- Owner-only、Private-only。
+- 只显示 `source_file_id` 和统计标签，不显示联系人、群名、QQ 或聊天正文。
+
+### `/风格 场景`
+
+查看场景画像摘要，例如群聊插话、私聊短回复、显式回复、问句回复等场景分布。
+
+用法：
+
+```text
+/风格 场景
+```
+
+说明：
+
+- Owner-only、Private-only。
+- 只显示场景标签、计数、平均长度和推荐回复形态。
+- 不显示历史上下文或真实回复正文。
+
+### `/风格 检索`
+
+用当前对方消息在本地历史索引中检索相似样本。
+
+用法：
+
+```text
+/风格 检索 你看下这个安排行不行
+```
+
+说明：
+
+- Owner-only、Private-only。
+- 会临时读取本地 QCE JSON 计算相似度，但不会返回或保存历史聊天正文。
+- 返回结果只包含 `sample_id/source_file_id`、相似度、质量分、回复长度和上下文数量。
+- 当前用于调试检索层，还不会把历史原文发送给模型生成回复。
 
 ### `/风格 清空样本`
 
@@ -491,7 +556,7 @@ data/style_profiles/import_inbox/
 用法：
 
 ```text
-/用我的风格回复：你现在忙不忙
+/用我的风格回复：你看下这个安排行不行
 用我的风格回复：这个怎么回比较自然
 风格回复：对方消息
 /style draft 对方消息
@@ -534,8 +599,8 @@ data/style_profiles/import_inbox/
 计划：
 
 - 重构更细的 style profile 字段。
-- 从聊天记录构建“对方上一句/上下文 -> 主人真实回复”的样本索引。
-- 增加 `/风格 评估`。
+- 继续优化“对方上一句/上下文 -> 主人真实回复”的样本索引。
+- `/风格 评估`、`/风格 关系`、`/风格 场景`、`/风格 检索` 已有第一版。
 - 优化常见表达提取，去掉泛词。
 - 区分全局风格和不同联系人/群的关系特定风格。
 

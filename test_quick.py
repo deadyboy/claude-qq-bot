@@ -50,7 +50,11 @@ from src.plugins.claude.style_profile import (
     parse_style_import_file_payload,
     parse_style_set_payload,
 )
-from src.plugins.claude.style_distill import run_qce_style_distillation
+from src.plugins.claude.style_distill import (
+    format_style_evaluation_report,
+    retrieve_similar_style_samples,
+    run_qce_style_distillation,
+)
 
 RUN_ID = uuid.uuid4().hex[:8]
 
@@ -289,33 +293,37 @@ async def test_style_profile():
         assert parse_style_command("/风格 导入 在的") == ("import", "在的")
         assert parse_style_command("/风格 导入文件 chat.csv 我=36") == ("import_file", "chat.csv 我=36")
         assert parse_style_command("/风格 确认导入 test123") == ("confirm_import", "test123")
+        assert parse_style_command("/风格 评估") == ("evaluation", "")
+        assert parse_style_command("/风格 关系") == ("relationships", "")
+        assert parse_style_command("/风格 场景") == ("scenes", "")
+        assert parse_style_command("/风格 检索 样例问题") == ("retrieve", "样例问题")
         assert parse_style_command("/风格 清空样本 确认") == ("clear_examples", "确认")
-        assert parse_style_draft_payload("用我的风格回复：在不在") == "在不在"
-        assert parse_style_import_file_payload("chat.csv 我=36,付健") == ("chat.csv", ["36", "付健"])
+        assert parse_style_draft_payload("用我的风格回复：样例问题") == "样例问题"
+        assert parse_style_import_file_payload("chat.csv 我=owner,me") == ("chat.csv", ["owner", "me"])
 
         txt_records = parse_chat_log_text(
-            "36: 05-08 01:00:11\n在的在的，刚看到\n朋友: 05-08 01:00:12\n你现在忙不忙",
+            "owner: 05-08 01:00:11\n样例回复A\nfriend: 05-08 01:00:12\n样例问题A",
             ".txt",
         )
         assert len(txt_records) == 2
-        assert txt_records[0]["sender"] == "36"
+        assert txt_records[0]["sender"] == "owner"
 
         qq_export_records = parse_chat_log_text(
             "消息记录（此消息记录为文本格式，不支持重新导入）\n"
             "消息分组:最近联系人\n"
-            "消息对象:36\n"
-            "2023-11-29 19:25:07 36\n"
-            "在的在的，刚看到\n"
-            "2023-11-29 19:26:07 朋友\n"
-            "你现在忙不忙\n",
+            "消息对象:owner\n"
+            "2023-11-29 19:25:07 owner\n"
+            "样例回复A\n"
+            "2023-11-29 19:26:07 friend\n"
+            "样例问题A\n",
             ".txt",
         )
         assert len(qq_export_records) == 2
-        assert qq_export_records[0]["sender"] == "36"
-        assert qq_export_records[0]["text"] == "在的在的，刚看到"
+        assert qq_export_records[0]["sender"] == "owner"
+        assert qq_export_records[0]["text"] == "样例回复A"
 
         json_records = parse_chat_log_text(
-            '[{"role":"owner","text":"我看看"}, {"role":"other","text":"你在哪"}]',
+            '[{"role":"owner","text":"样例回复B"}, {"role":"other","text":"样例问题B"}]',
             ".json",
         )
         assert json_records[0]["role"] == "owner"
@@ -324,13 +332,13 @@ async def test_style_profile():
         inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "chat.csv").write_text(
             "sender,text\n"
-            "36,在的在的，刚看到\n"
-            "friend,你现在忙不忙\n"
-            "36,我看看，啥事\n"
-            "36,我的 api key 是 sk-testsecret123456\n",
+            "owner,样例回复A\n"
+            "friend,样例问题A\n"
+            "owner,样例回复B\n"
+            "owner,我的 api key 是 sk-testsecret123456\n",
             encoding="utf-8",
         )
-        preview = store.preview_import_file("chat.csv", ["36"])
+        preview = store.preview_import_file("chat.csv", ["owner"])
         assert preview["ok"], preview["message"]
         assert preview["message_count"] == 2
         assert preview["skipped_sensitive"] == 1
@@ -338,15 +346,15 @@ async def test_style_profile():
         pending_files = list(store.pending_dir.glob("*.json"))
         assert len(pending_files) == 1
         pending_text = pending_files[0].read_text(encoding="utf-8")
-        assert "你现在忙不忙" not in pending_text
-        assert "在的在的" not in pending_text
+        assert "样例问题A" not in pending_text
+        assert "样例回复A" not in pending_text
 
         ok, msg = store.confirm_import(preview["import_id"])
         assert ok, msg
         imported_profile = store.load()
         assert imported_profile["source_imports"]
         assert imported_profile["stats"]["sample_count"] == 2
-        assert "你现在忙不忙" not in format_style_profile(imported_profile)
+        assert "样例问题A" not in format_style_profile(imported_profile)
 
         prompt = build_style_system_prompt(loaded)
         assert "回复草稿生成器" in prompt
@@ -373,17 +381,17 @@ async def test_style_distill():
             "chatInfo": {
                 "name": "private_test",
                 "type": "private",
-                "selfUin": "1030400950",
-                "selfName": "36",
+                "selfUin": "1000000001",
+                "selfName": "owner",
             },
             "messages": [
                 {
                     "id": "m1",
                     "seq": "1",
                     "timestamp": 1700000000,
-                    "sender": {"uin": "200", "name": "friend"},
+                    "sender": {"uin": "2000000002", "name": "friend"},
                     "type": "type_1",
-                    "content": {"text": "你现在忙不忙", "elements": [{"type": "text"}]},
+                    "content": {"text": "样例问题A", "elements": [{"type": "text"}]},
                     "recalled": False,
                     "system": False,
                 },
@@ -391,9 +399,9 @@ async def test_style_distill():
                     "id": "m2",
                     "seq": "2",
                     "timestamp": 1700000030,
-                    "sender": {"uin": "1030400950", "name": "36"},
+                    "sender": {"uin": "1000000001", "name": "owner"},
                     "type": "type_1",
-                    "content": {"text": "咋了", "elements": [{"type": "text"}]},
+                    "content": {"text": "样例回复A", "elements": [{"type": "text"}]},
                     "recalled": False,
                     "system": False,
                 },
@@ -401,9 +409,9 @@ async def test_style_distill():
                     "id": "m3",
                     "seq": "3",
                     "timestamp": 1700000060,
-                    "sender": {"uin": "200", "name": "friend"},
+                    "sender": {"uin": "2000000002", "name": "friend"},
                     "type": "type_1",
-                    "content": {"text": "这个怎么弄", "elements": [{"type": "text"}]},
+                    "content": {"text": "样例问题B", "elements": [{"type": "text"}]},
                     "recalled": False,
                     "system": False,
                 },
@@ -411,9 +419,9 @@ async def test_style_distill():
                     "id": "m4",
                     "seq": "4",
                     "timestamp": 1700000120,
-                    "sender": {"uin": "1030400950", "name": "36"},
+                    "sender": {"uin": "1000000001", "name": "owner"},
                     "type": "type_1",
-                    "content": {"text": "我看看", "elements": [{"type": "text"}]},
+                    "content": {"text": "样例回复B", "elements": [{"type": "text"}]},
                     "recalled": False,
                     "system": False,
                 },
@@ -421,7 +429,7 @@ async def test_style_distill():
                     "id": "m5",
                     "seq": "5",
                     "timestamp": 1700000180,
-                    "sender": {"uin": "1030400950", "name": "36"},
+                    "sender": {"uin": "1000000001", "name": "owner"},
                     "type": "type_1",
                     "content": {"text": "我的 api key 是 sk-testsecret123456", "elements": [{"type": "text"}]},
                     "recalled": False,
@@ -437,7 +445,7 @@ async def test_style_distill():
         result = run_qce_style_distillation(
             input_dir=input_dir,
             output_root=output_root,
-            self_uin="1030400950",
+            self_uin="1000000001",
             max_index_samples=10,
             apply_to_profile=True,
             store=store,
@@ -449,16 +457,33 @@ async def test_style_distill():
         output_dir = Path(result["output_dir"])
         summary_text = (output_dir / "style_profile_summary.json").read_text(encoding="utf-8")
         index_text = (output_dir / "sample_index.jsonl").read_text(encoding="utf-8")
+        relation_text = (output_dir / "relationship_profiles.json").read_text(encoding="utf-8")
+        scene_text = (output_dir / "scene_profiles.json").read_text(encoding="utf-8")
+        eval_text = (output_dir / "evaluation_report.json").read_text(encoding="utf-8")
         profile_text = store.profile_path().read_text(encoding="utf-8")
-        for forbidden in ("你现在忙不忙", "这个怎么弄", "咋了", "我看看", "api key", "sk-testsecret"):
+        for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "api key", "sk-testsecret"):
             assert forbidden not in summary_text
             assert forbidden not in index_text
+            assert forbidden not in relation_text
+            assert forbidden not in scene_text
+            assert forbidden not in eval_text
             assert forbidden not in profile_text
 
         profile = store.load()
         assert profile["stats"]["source"] == "qce_offline_stage5b"
         assert profile.get("offline_distillations")
         assert "examples" in profile and profile["examples"] == []
+
+        eval_report = format_style_evaluation_report(output_dir)
+        assert "Stage 5B 评估摘要" in eval_report
+        assert "样例问题A" not in eval_report
+
+        retrieval = retrieve_similar_style_samples("样例问题", run_dir=output_dir)
+        assert retrieval["ok"], retrieval
+        assert retrieval["result_count"] >= 1
+        retrieval_text = json.dumps(retrieval, ensure_ascii=False)
+        assert "样例问题A" not in retrieval_text
+        assert "样例回复A" not in retrieval_text
     finally:
         store.delete_for_tests()
         if root.exists():

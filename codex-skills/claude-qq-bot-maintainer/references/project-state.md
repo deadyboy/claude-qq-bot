@@ -159,11 +159,18 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
 - Builds high-quality sample indexes from chat logs: previous message/context plus the owner's real reply.
 - Stores only aggregate style summaries and message-id based sample indexes; no raw chat text is persisted in the summary or index.
 - Updates `data/style_profiles/default.json` with a conservative style-profile patch and offline run metadata.
+- Generates `relationship_profiles.json`, `scene_profiles.json`, and `evaluation_report.json`.
+- Added owner-only, private-only Stage 5B inspection commands:
+  - `/风格 评估`
+  - `/风格 关系`
+  - `/风格 场景`
+  - `/风格 检索 <当前对方消息>`
+- Similar-sample retrieval reads local QCE JSON transiently and returns only sample ids/statistics, not raw historical text.
 
 Still planned:
 
 - Redesign style-profile fields for stronger imitation beyond draft replies.
-- Add `/风格 评估` to compare generated replies against real historical replies.
+- Add true generation-vs-history evaluation after retrieval quality is stable.
 - Improve phrase extraction to avoid generic words.
 - Separate global owner style from relationship-specific style.
 

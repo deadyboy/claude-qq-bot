@@ -53,7 +53,15 @@ from .style_profile import (
     parse_style_set_payload,
     style_store,
 )
-from .style_distill import format_qce_distillation_result, run_qce_style_distillation
+from .style_distill import (
+    format_qce_distillation_result,
+    format_similar_sample_results,
+    format_style_evaluation_report,
+    format_style_relationship_report,
+    format_style_scene_report,
+    retrieve_similar_style_samples,
+    run_qce_style_distillation,
+)
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -1359,6 +1367,27 @@ async def handle_style_command(
         except Exception as e:
             write_runtime_error("handle_style_offline_distill", e)
             await send_qq_text(bot, event, f"离线蒸馏失败：{type(e).__name__}")
+        return
+
+    if action == "evaluation":
+        await send_qq_text(bot, event, format_style_evaluation_report(payload or None))
+        return
+
+    if action == "relationships":
+        await send_qq_text(bot, event, format_style_relationship_report(payload or None))
+        return
+
+    if action == "scenes":
+        await send_qq_text(bot, event, format_style_scene_report(payload or None))
+        return
+
+    if action == "retrieve":
+        try:
+            result = await asyncio.to_thread(retrieve_similar_style_samples, payload)
+            await send_qq_text(bot, event, format_similar_sample_results(result))
+        except Exception as e:
+            write_runtime_error("handle_style_retrieve", e)
+            await send_qq_text(bot, event, f"相似样本检索失败：{type(e).__name__}")
         return
 
     if action == "clear_examples":
