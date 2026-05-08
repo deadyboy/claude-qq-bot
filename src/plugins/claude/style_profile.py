@@ -983,6 +983,22 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def format_recent_dialogue_for_prompt(messages: List[Dict[str, Any]] | None, limit: int = 8) -> str:
+    """Format short recent dialogue context for immediate generation only."""
+    if not messages:
+        return ""
+    lines = ["最近对话（用于理解上下文；不要机械复读上一条回复）："]
+    for item in messages[-max(1, int(limit)):]:
+        if not isinstance(item, dict):
+            continue
+        role = "主人" if item.get("role") == "assistant" else "对方"
+        text = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()
+        if not text:
+            continue
+        lines.append(f"- {role}：{text[:160]}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def build_style_system_prompt(
     profile: Dict[str, Any],
     generation_context: Dict[str, Any] | None = None,
@@ -992,7 +1008,10 @@ def build_style_system_prompt(
         "你是一个回复草稿生成器，任务是模仿“主人”的日常聊天风格生成一条可复制的中文回复草稿。",
         "只输出草稿正文，不要解释，不要加标题。",
         "不要声称自己是机器人；不要代替主人承诺无法确认的现实行动；不要编造事实。",
-        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，生成自然但不确认事实的草稿，例如“刚看到，咋啦”“还行，啥事”，不要直接替主人回答“在家/不忙/已经做了”。",
+        "必须先理解并回应对方当前消息，不要用万能寒暄敷衍。",
+        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，生成自然但不确认事实的草稿，例如“咋啦”“啥事”“我看下”，不要直接替主人回答“在家/不忙/已经做了”。",
+        "不要连续重复同一句或同一个口头禅；如果最近已经说过“刚看到”，下一条不要再用。",
+        "遇到[表情]、[动画表情]、[图片]时，可以按语气接话，但不要假装看清图片具体内容。",
         f"语气：{data['tone']}",
         f"长度：{data['length']}",
         f"表情：{data['emoji']}",
@@ -1004,7 +1023,7 @@ def build_style_system_prompt(
         lines.append("避免：")
         lines.extend(f"- {item}" for item in data["avoid"][:10])
     if data.get("common_phrases"):
-        lines.append("可参考的常见表达：")
+        lines.append("可参考的常见表达；只当风味，不要连续照搬：")
         lines.extend(f"- {item}" for item in data["common_phrases"][:8])
     if data.get("punctuation"):
         lines.append("标点习惯：")
@@ -1084,6 +1103,7 @@ async def generate_style_draft(
     actor_id: str | int | None = None,
     scope: str = "private",
     auto_reply: bool = False,
+    recent_dialogue: List[Dict[str, Any]] | None = None,
 ) -> str:
     target = message.strip()
     if not target:
@@ -1114,8 +1134,16 @@ async def generate_style_draft(
         context=generation_context,
         auto_reply=auto_reply,
     )
+    user_prompt_parts = []
+    recent_prompt = format_recent_dialogue_for_prompt(recent_dialogue)
+    if recent_prompt:
+        user_prompt_parts.append(recent_prompt)
+    user_prompt_parts.extend([
+        f"对方新消息：{target}",
+        "生成主人下一条自然回复。需要结合最近对话，避免重复上一条回复。",
+    ])
     return await llm_client.chat(
-        messages=[{"role": "user", "content": f"对方消息：{target}"}],
+        messages=[{"role": "user", "content": "\n".join(user_prompt_parts)}],
         system_prompt=build_style_system_prompt(profile, generation_context),
         temperature=0.6,
     )

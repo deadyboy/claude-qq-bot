@@ -44,6 +44,7 @@ from src.plugins.claude.style_profile import (
     StyleProfileStore,
     build_style_system_prompt,
     format_generation_context_for_prompt,
+    format_recent_dialogue_for_prompt,
     format_style_profile,
     parse_chat_log_text,
     parse_style_command,
@@ -386,6 +387,15 @@ async def test_style_profile():
         assert "自然、短句、像我本人" in prompt
         assert "在的在的，刚看到，我来处理。" in prompt
         assert "不要直接替主人回答" in prompt
+        assert "不要连续重复" in prompt
+
+        recent_prompt = format_recent_dialogue_for_prompt([
+            {"role": "user", "content": "你现在忙？"},
+            {"role": "assistant", "content": "刚看到，咋啦"},
+        ])
+        assert "最近对话" in recent_prompt
+        assert "对方：你现在忙？" in recent_prompt
+        assert "主人：刚看到，咋啦" in recent_prompt
     finally:
         store.delete_for_tests()
 

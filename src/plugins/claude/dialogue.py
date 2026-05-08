@@ -8,6 +8,7 @@
 import asyncio
 import traceback
 from pathlib import Path
+from typing import Any
 import nonebot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import MessageEvent, GroupMessageEvent, PrivateMessageEvent
@@ -94,16 +95,62 @@ def get_session_id(event: MessageEvent) -> str:
         return f"private_{event.user_id}"
 
 
+def _segment_data(segment: Any) -> dict:
+    data = getattr(segment, "data", None)
+    return data if isinstance(data, dict) else {}
+
+
+def _segment_to_text(segment: Any) -> str:
+    """Convert non-text QQ message segments into compact text hints."""
+    segment_type = str(getattr(segment, "type", "") or "")
+    data = _segment_data(segment)
+
+    if segment_type == "text":
+        return str(data.get("text") or str(segment)).strip()
+    if segment_type == "face":
+        label = data.get("name") or data.get("text") or data.get("id") or ""
+        return f"[表情:{label}]" if label else "[表情]"
+    if segment_type in {"mface", "bface", "market_face"}:
+        label = (
+            data.get("summary")
+            or data.get("name")
+            or data.get("text")
+            or data.get("emoji_id")
+            or data.get("id")
+            or ""
+        )
+        return f"[动画表情:{label}]" if label else "[动画表情]"
+    if segment_type == "image":
+        summary = str(data.get("summary") or "").strip()
+        sub_type = str(data.get("sub_type") or "")
+        if "动画表情" in summary or sub_type == "1":
+            return "[动画表情]"
+        if summary:
+            return f"[图片:{summary}]"
+        return "[图片]"
+    if segment_type == "record":
+        return "[语音]"
+    if segment_type == "video":
+        return "[视频]"
+    if segment_type == "file":
+        name = data.get("name") or data.get("file") or ""
+        return f"[文件:{name}]" if name else "[文件]"
+    return ""
+
+
 def extract_text_and_images(event: MessageEvent) -> tuple[str, list[str]]:
-    """从消息中提取文本和图片 base64"""
+    """从消息中提取可供模型理解的文本提示和图片 URL。"""
     text_parts = []
     images = []
 
     for segment in event.message:
-        if segment.type == "text":
-            text_parts.append(str(segment).strip())
-        elif segment.type == "image":
-            images.append(segment.data.get("url", ""))
+        if getattr(segment, "type", "") == "image":
+            url = _segment_data(segment).get("url", "")
+            if url:
+                images.append(url)
+        text = _segment_to_text(segment)
+        if text:
+            text_parts.append(text)
 
     return " ".join(text_parts), images
 
@@ -787,7 +834,12 @@ async def maybe_handle_style_auto_reply(
         )
         return True
 
+    from .memory import session_manager as simple_session_manager
+    session_id = get_session_id(event)
+    history = await simple_session_manager.get_messages(session_id)
+
     try:
+        await simple_session_manager.add_message(session_id, "user", text)
         draft = await generate_style_draft(
             text,
             include_raw_fewshot=is_style_raw_fewshot_enabled(),
@@ -796,10 +848,12 @@ async def maybe_handle_style_auto_reply(
             actor_id=getattr(event, "user_id", ""),
             scope=chat_type,
             auto_reply=True,
+            recent_dialogue=history,
         )
         response = format_reply(draft)
         for part in split_qq_msg(response):
             await send_qq_text(bot, event, part)
+        await simple_session_manager.add_message(session_id, "assistant", response)
     except Exception as e:
         write_runtime_error("maybe_handle_style_auto_reply", e)
     return True
