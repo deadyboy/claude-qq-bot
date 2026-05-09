@@ -527,6 +527,8 @@ async def test_style_distill():
         assert result["turn_count"] >= 6
         assert result["dialogue_pair_count"] >= 3
         assert result["indexed_samples"] >= 1
+        assert result["rag_pool_count"] >= 1
+        assert result["sft_candidate_count"] >= 1
 
         output_dir = Path(result["output_dir"])
         summary_text = (output_dir / "style_profile_summary.json").read_text(encoding="utf-8")
@@ -534,15 +536,22 @@ async def test_style_distill():
         turns_text = (output_dir / "turns.jsonl").read_text(encoding="utf-8")
         pairs_text = (output_dir / "dialogue_pairs.jsonl").read_text(encoding="utf-8")
         phrase_text = (output_dir / "phrase_profile.json").read_text(encoding="utf-8")
+        rag_pool_text = (output_dir / "rag_pool.jsonl").read_text(encoding="utf-8")
+        sft_text = (output_dir / "sft_candidates.jsonl").read_text(encoding="utf-8")
+        rerank_rules_text = (output_dir / "rerank_style_rules.json").read_text(encoding="utf-8")
         relation_text = (output_dir / "relationship_profiles.json").read_text(encoding="utf-8")
         scene_text = (output_dir / "scene_profiles.json").read_text(encoding="utf-8")
         eval_text = (output_dir / "evaluation_report.json").read_text(encoding="utf-8")
         profile_text = store.profile_path().read_text(encoding="utf-8")
         assert "样例回复A" in turns_text
         assert "样例回复A" in pairs_text
+        assert "样例回复A" in rag_pool_text
+        assert "样例回复A" in sft_text
+        assert "hard_filters" in rerank_rules_text
         assert "high_freq_short_replies" in phrase_text
         assert "dialogue_pair_count" in eval_text
         assert "scene_counts" in eval_text
+        assert "taxonomy" in eval_text
         for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "这个怎么弄", "发我看看", "api key", "sk-testsecret"):
             assert forbidden not in summary_text
             assert forbidden not in index_text
