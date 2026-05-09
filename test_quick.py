@@ -43,6 +43,8 @@ from src.plugins.claude.permissions import (
 from src.plugins.claude.style_profile import (
     StyleProfileStore,
     build_style_system_prompt,
+    clean_style_common_phrases,
+    clean_style_habits,
     format_generation_context_for_prompt,
     format_recent_dialogue_for_prompt,
     format_style_profile,
@@ -67,6 +69,7 @@ from src.plugins.claude.style_distill import (
 )
 from src.plugins.claude.style_teaching import (
     TeachingReviewStore,
+    format_teaching_batch,
     format_teaching_review_window,
     format_teaching_status,
 )
@@ -418,6 +421,14 @@ async def test_style_profile():
         assert "最近对话" in recent_prompt
         assert "对方：你现在忙？" in recent_prompt
         assert "主人：刚看到，咋啦" in recent_prompt
+
+        assert clean_style_common_phrases(["图片", "QQ", "@某人", "咋了", "逆天"]) == ["咋了", "逆天"]
+        cleaned_habits = clean_style_habits([
+            "平均回复约 14 字，中位数约 6 字",
+            "倾向短句快速回应",
+            "从 28299 条本人文本消息蒸馏，只保存统计特征，不保存原文",
+        ])
+        assert cleaned_habits == ["倾向短句快速回应"]
     finally:
         store.delete_for_tests()
 
@@ -737,6 +748,27 @@ async def test_style_teaching():
         )
         assert ok, msg
         assert feedback and "别等我" in feedback["corrected_reply"]
+
+        run_dir = root / "stage5b_test"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with (run_dir / "sft_candidates.jsonl").open("w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "sample_id": "sample_a",
+                "source_file_id": "source_0001",
+                "relationship_id": "2000000002",
+                "chat_type": "private",
+                "scene_label": "private_short_casual",
+                "scope": "familiar_private",
+                "learning_value": "high",
+                "grounding_type": "text_grounded",
+                "context": [{"role": "other", "text": "在不在"}],
+                "target": "在",
+            }, ensure_ascii=False) + "\n")
+        batch = store.create_replay_batch(count=1, reviewer_ids=["1000000001"], run_dir=run_dir)
+        assert len(batch) == 1
+        assert batch[0]["message"] == "在不在"
+        assert batch[0]["candidates"] == ["在"]
+        assert "已创建 1 条教学题" in format_teaching_batch(batch)
         print("      通过")
         return True
     finally:

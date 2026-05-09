@@ -82,6 +82,10 @@ TEXT_HEADER_RE = re.compile(
 )
 INLINE_MESSAGE_RE = re.compile(r"^\s*(?P<sender>[^:\n：]{1,40})\s*[:：]\s*(?P<text>.+)$")
 TXT_METADATA_PREFIXES = ("消息记录", "消息分组:", "消息分组：", "消息对象:", "消息对象：")
+STYLE_PHRASE_STOPWORDS = {
+    "图片", "表情", "动画表情", "QQ", "手机", "最新", "使用", "新版", "请使",
+    "文件", "语音", "视频", "消息", "聊天", "撤回", "http", "https", "www",
+}
 
 
 def _now_iso() -> str:
@@ -107,6 +111,71 @@ def _normalize_list(value: Any) -> List[str]:
         seen.add(text)
         normalized.append(text[:80])
     return normalized[:20]
+
+
+def clean_style_common_phrases(value: Any, limit: int = 12) -> List[str]:
+    """Filter noisy extracted style phrases before display/prompt use."""
+    phrases = _normalize_list(value)
+    cleaned = []
+    seen = set()
+    for phrase in phrases:
+        text = phrase.strip().strip("，。！？!?~～")
+        if not text or text in seen:
+            continue
+        if text.startswith("@") or text.startswith("/"):
+            continue
+        if text in STYLE_PHRASE_STOPWORDS:
+            continue
+        if any(token in text for token in ("[图片", "[表情", "[动画表情", "http", "www.")):
+            continue
+        if len(text) <= 1 or len(text) > 24:
+            continue
+        if contains_sensitive_content(text):
+            continue
+        seen.add(text)
+        cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def clean_style_habits(value: Any, limit: int = 8) -> List[str]:
+    """Keep durable behavior rules and remove repeated distillation bookkeeping."""
+    habits = _normalize_list(value)
+    cleaned = []
+    seen_keys = set()
+    for habit in habits:
+        text = habit.strip()
+        if not text:
+            continue
+        if text.startswith("从 ") and "蒸馏" in text:
+            continue
+        if text.startswith("常见表达："):
+            continue
+        if "平均回复约" in text or "中位数约" in text:
+            continue
+        if "只保存统计特征" in text:
+            continue
+        key = text
+        if "短句" in text or "短回复" in text:
+            key = "短句"
+        elif "上下文" in text or "具体回应" in text:
+            key = "上下文回应"
+        elif "群聊" in text:
+            key = "群聊"
+        elif "私聊" in text:
+            key = "私聊"
+        elif "反问" in text or "追问" in text:
+            key = "追问"
+        elif "省略号" in text or "停顿" in text:
+            key = "停顿"
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        cleaned.append(text[:80])
+        if len(cleaned) >= limit:
+            break
+    return cleaned
 
 
 def _normalize_source_imports(value: Any) -> List[Dict[str, Any]]:
@@ -136,9 +205,9 @@ def normalize_style_profile(raw: Any) -> Dict[str, Any]:
     for field in ("tone", "length", "emoji"):
         profile[field] = str(profile.get(field) or DEFAULT_STYLE_PROFILE[field]).strip()
 
-    profile["habits"] = _normalize_list(profile.get("habits", []))
+    profile["habits"] = clean_style_habits(profile.get("habits", []))
     profile["avoid"] = _normalize_list(profile.get("avoid", []))
-    profile["common_phrases"] = _normalize_list(profile.get("common_phrases", []))
+    profile["common_phrases"] = clean_style_common_phrases(profile.get("common_phrases", []))
     profile["punctuation"] = _normalize_list(profile.get("punctuation", []))
     profile["source_imports"] = _normalize_source_imports(profile.get("source_imports", []))
     if not isinstance(profile.get("stats"), dict):
@@ -896,6 +965,7 @@ def format_style_help() -> str:
         "- /风格 原句 开/关：控制真实历史原句 few-shot，开启需要二次确认并写审计",
         "- /风格 自动回复 开/关：控制信任名单内的 owner-style 代聊自动回复",
         "- /教学 开/关：开启影子审核；信任用户私聊只生成候选给主人，不自动回复",
+        "- /教学 出题 <数量> [场景]：从高质量历史样本批量生成审核题，不需要你手写测试对话",
         "- /采纳 <id> <1-3>；/评分 <id> <1-5>；/改成 <id> <正确回复>；/拒绝 <id> <原因>：记录教学反馈",
         "- /风格 清空样本 确认：删除已导入样本",
         "- /用我的风格回复：<对方消息>：生成一条草稿并创建可评分教学样本",

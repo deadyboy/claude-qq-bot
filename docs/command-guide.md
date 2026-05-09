@@ -651,6 +651,8 @@ data/style_profiles/import_inbox/
 /教学 关
 /教学 最近
 /教学 复盘
+/教学 出题 10
+/教学 出题 10 private_short_casual
 ```
 
 反馈命令：
@@ -674,6 +676,7 @@ data/style_profiles/import_inbox/
 说明：
 
 - 教学模式复用现有风格生成和 Stage 5B RAG，不另起一套重复生成逻辑。
+- `/教学 出题` 会从 `sft_candidates.jsonl` 抽取文本可归因的高质量历史样本，批量生成审核题；适合快速积累评分和改写反馈。
 - 反馈写入 `data/style_profiles/teaching_feedback.jsonl`，用于后续回放评估、rerank 规则和训练样本筛选。
 - 影子审核只对信任用户私聊生效；群聊和非信任用户不会进入该模式。
 - `/代聊` 自动回复和 `/教学` 影子审核是两种运行模式；需要人工参与优化时优先用 `/教学 开`。

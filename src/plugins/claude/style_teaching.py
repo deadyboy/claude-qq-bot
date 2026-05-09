@@ -37,6 +37,35 @@ def _normalize_candidate(item: Any) -> str:
     return _clean_text(text, 300)
 
 
+def _iter_jsonl(path: Path):
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                yield item
+
+
+def _last_other_text(context: List[Dict[str, Any]]) -> str:
+    for item in reversed(context):
+        if str(item.get("role") or "") == "other":
+            text = _clean_text(item.get("text") or item.get("content"), 700)
+            if text:
+                return text
+    for item in reversed(context):
+        text = _clean_text(item.get("text") or item.get("content"), 700)
+        if text:
+            return text
+    return ""
+
+
 def _normalize_review(raw: Any) -> Dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
@@ -269,6 +298,73 @@ class TeachingReviewStore:
             if path.exists():
                 path.unlink()
 
+    def _used_sample_ids(self) -> set[str]:
+        used = set()
+        for review in self._load_active().values():
+            sample_id = str((review.get("metadata") or {}).get("sample_id") or "").strip()
+            if sample_id:
+                used.add(sample_id)
+        for item in _iter_jsonl(self.feedback_path) or []:
+            sample_id = str(((item.get("metadata") or {}) if isinstance(item, dict) else {}).get("sample_id") or "").strip()
+            if sample_id:
+                used.add(sample_id)
+        return used
+
+    def create_replay_batch(
+        self,
+        *,
+        count: int = 10,
+        reviewer_ids: List[str] | None = None,
+        run_dir: str | Path | None = None,
+        scene_label: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Create fast batch review items from text-grounded SFT candidates."""
+        from .style_distill import find_latest_distill_run
+
+        run_path = find_latest_distill_run(run_dir)
+        if run_path is None:
+            raise FileNotFoundError("还没有找到 Stage 5B 离线蒸馏结果。")
+        path = run_path / "sft_candidates.jsonl"
+        if not path.exists():
+            raise FileNotFoundError("当前蒸馏结果缺少 sft_candidates.jsonl。")
+
+        used = self._used_sample_ids()
+        created = []
+        max_count = max(1, min(30, int(count or 10)))
+        for item in _iter_jsonl(path) or []:
+            sample_id = str(item.get("sample_id") or "").strip()
+            if not sample_id or sample_id in used:
+                continue
+            if scene_label and item.get("scene_label") != scene_label:
+                continue
+            message = _last_other_text(item.get("context") or [])
+            target = _clean_text(item.get("target"), 300)
+            if not message or not target:
+                continue
+            review = self.create_review(
+                message=message,
+                candidates=[target],
+                chat_type=str(item.get("chat_type") or "private"),
+                target_id=str(item.get("relationship_id") or ""),
+                trigger="batch_replay",
+                recent_dialogue=item.get("context") or [],
+                reviewer_ids=reviewer_ids or [],
+                metadata={
+                    "run_id": run_path.name,
+                    "sample_id": sample_id,
+                    "source_file_id": item.get("source_file_id"),
+                    "scene_label": item.get("scene_label"),
+                    "scope": item.get("scope"),
+                    "learning_value": item.get("learning_value"),
+                    "grounding_type": item.get("grounding_type"),
+                },
+            )
+            created.append(review)
+            used.add(sample_id)
+            if len(created) >= max_count:
+                break
+        return created
+
 
 teaching_store = TeachingReviewStore()
 
@@ -320,3 +416,18 @@ def format_recent_reviews(reviews: List[Dict[str, Any]]) -> str:
         )
     return "\n".join(lines)
 
+
+def format_teaching_batch(reviews: List[Dict[str, Any]]) -> str:
+    if not reviews:
+        return "没有创建新的教学题。可能当前筛选条件下的样本已经出完了。"
+    lines = [
+        f"已创建 {len(reviews)} 条教学题：",
+    ]
+    for review in reviews[:20]:
+        metadata = review.get("metadata") or {}
+        lines.append(
+            f"- {review.get('id')} {metadata.get('scene_label') or 'unknown'} "
+            f"{metadata.get('scope') or ''}：{str(review.get('message') or '')[:36]}"
+        )
+    lines.append("用 /教学 最近 查看；用 /采纳 <id> 1、/评分 <id> 1-5、/改成 <id> ... 反馈。")
+    return "\n".join(lines)

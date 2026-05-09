@@ -20,7 +20,13 @@ from statistics import median
 from typing import Any, Dict, Iterable, List, Sequence
 
 from .auto_memory import contains_sensitive_content
-from .style_profile import DEFAULT_PROFILE_NAME, StyleProfileStore, style_store
+from .style_profile import (
+    DEFAULT_PROFILE_NAME,
+    StyleProfileStore,
+    clean_style_common_phrases,
+    clean_style_habits,
+    style_store,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -2155,7 +2161,12 @@ def apply_qce_distillation_summary(
                 continue
             seen.add(text)
             merged.append(text[:80])
-        profile[field] = merged[:20]
+        if field == "habits":
+            profile[field] = clean_style_habits(merged)
+        elif field == "common_phrases":
+            profile[field] = clean_style_common_phrases(merged)
+        else:
+            profile[field] = merged[:20]
 
     profile["stats"] = patch.get("stats") or profile.get("stats") or {}
 

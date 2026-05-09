@@ -77,6 +77,7 @@ from .style_distill import (
 )
 from .style_teaching import (
     format_recent_reviews,
+    format_teaching_batch,
     format_teaching_review_window,
     format_teaching_status,
     teaching_store,
@@ -1777,6 +1778,34 @@ async def handle_teaching_command(
             return
         if switch in {"最近", "recent", "列表", "list"}:
             await send_qq_text(bot, event, format_recent_reviews(teaching_store.list_recent(actor_id)))
+            return
+        if switch.startswith("出题") or switch.startswith("batch"):
+            payload_text = switch.removeprefix("出题").removeprefix("batch").strip()
+            parts = payload_text.split()
+            count = 10
+            scene_label = ""
+            if parts:
+                try:
+                    count = int(parts[0])
+                    scene_label = parts[1] if len(parts) > 1 else ""
+                except ValueError:
+                    scene_label = parts[0]
+                    if len(parts) > 1:
+                        try:
+                            count = int(parts[1])
+                        except ValueError:
+                            count = 10
+            try:
+                reviews = await asyncio.to_thread(
+                    teaching_store.create_replay_batch,
+                    count=count,
+                    reviewer_ids=[str(actor_id)],
+                    scene_label=scene_label,
+                )
+                await send_qq_text(bot, event, format_teaching_batch(reviews))
+            except Exception as e:
+                write_runtime_error("handle_teaching_batch", e)
+                await send_qq_text(bot, event, f"创建教学题失败：{type(e).__name__}")
             return
         if switch in {"复盘", "summary", "统计", "stats"}:
             await send_qq_text(
