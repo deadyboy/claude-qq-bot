@@ -944,6 +944,17 @@ def _style_auto_scope(event: MessageEvent) -> tuple[str, str, bool]:
     return "private", str(event.user_id), access_store.is_trusted_user(event.user_id)
 
 
+def should_suppress_plain_chat_for_style_target(event: MessageEvent) -> bool:
+    """Prevent trusted style targets from falling through to the generic assistant."""
+    if not isinstance(event, PrivateMessageEvent):
+        return False
+    if is_owner_event(event):
+        return False
+    if is_style_teaching_enabled() or is_style_auto_reply_enabled():
+        return False
+    return access_store.is_trusted_user(event.user_id)
+
+
 def _looks_like_command_text(text: str) -> bool:
     stripped = text.strip()
     if stripped.startswith("/"):
@@ -1129,6 +1140,18 @@ async def handle_simple_chat(
     if await maybe_handle_style_auto_reply(bot, event, text):
         return
     if is_style_auto_reply_enabled():
+        return
+    if should_suppress_plain_chat_for_style_target(event):
+        confirmation_store.log(
+            {
+                "id": "plain_chat_skip",
+                "type": "style_plain_chat_suppressed",
+                "summary": "信任联系人未开启教学/代聊，跳过普通聊天兜底",
+            },
+            actor_id=getattr(event, "user_id", ""),
+            status="suppressed",
+            result="scope=private",
+        )
         return
 
     # 获取会话 ID 和历史

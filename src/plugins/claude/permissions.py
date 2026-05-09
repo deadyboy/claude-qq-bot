@@ -183,7 +183,7 @@ class AccessPolicyStore:
             "信任名单：",
             f"- 信任用户：{len(users)} 个",
             f"- 信任群：{len(groups)} 个",
-            "- 当前作用：仅作为未来自动代聊/高风险工具的权限基座；不会改变普通聊天默认行为。",
+            "- 当前作用：限定受控代聊/教学模式对象；信任私聊对象在未开启教学或代聊时不会走普通聊天兜底。",
         ]
         if include_ids:
             user_line = "、".join(users.keys()) if users else "无"
