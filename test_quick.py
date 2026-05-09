@@ -53,13 +53,17 @@ from src.plugins.claude.style_profile import (
     parse_style_set_payload,
 )
 from src.plugins.claude.style_distill import (
+    build_retrieval_first_prompt,
     build_style_generation_context,
     detect_message_intent,
     find_source_for_target,
     format_style_debug_report,
     format_style_evaluation_report,
+    infer_scene_label,
+    retrieve_dialogue_pair_samples,
     retrieve_similar_style_samples,
     run_qce_style_distillation,
+    style_rerank_candidates,
 )
 from src.plugins.claude import runtime_state
 
@@ -520,15 +524,25 @@ async def test_style_distill():
         )
         assert result["ok"], result
         assert result["owner_text_messages"] == 3
+        assert result["turn_count"] >= 6
+        assert result["dialogue_pair_count"] >= 3
         assert result["indexed_samples"] >= 1
 
         output_dir = Path(result["output_dir"])
         summary_text = (output_dir / "style_profile_summary.json").read_text(encoding="utf-8")
         index_text = (output_dir / "sample_index.jsonl").read_text(encoding="utf-8")
+        turns_text = (output_dir / "turns.jsonl").read_text(encoding="utf-8")
+        pairs_text = (output_dir / "dialogue_pairs.jsonl").read_text(encoding="utf-8")
+        phrase_text = (output_dir / "phrase_profile.json").read_text(encoding="utf-8")
         relation_text = (output_dir / "relationship_profiles.json").read_text(encoding="utf-8")
         scene_text = (output_dir / "scene_profiles.json").read_text(encoding="utf-8")
         eval_text = (output_dir / "evaluation_report.json").read_text(encoding="utf-8")
         profile_text = store.profile_path().read_text(encoding="utf-8")
+        assert "样例回复A" in turns_text
+        assert "样例回复A" in pairs_text
+        assert "high_freq_short_replies" in phrase_text
+        assert "dialogue_pair_count" in eval_text
+        assert "scene_counts" in eval_text
         for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "这个怎么弄", "发我看看", "api key", "sk-testsecret"):
             assert forbidden not in summary_text
             assert forbidden not in index_text
@@ -608,6 +622,26 @@ async def test_style_distill():
         assert "这个怎么弄" in debug_report
         assert "发我看看" in debug_report
         assert "sk-testsecret" not in debug_report
+
+        pair_retrieval = retrieve_dialogue_pair_samples(
+            "样例问题",
+            run_dir=output_dir,
+            chat_type="private",
+            target_id="2000000002",
+        )
+        assert pair_retrieval["ok"], pair_retrieval
+        assert pair_retrieval["result_count"] >= 1
+        pair_retrieval_text = json.dumps(pair_retrieval, ensure_ascii=False)
+        assert "样例回复A" in pair_retrieval_text
+        retrieval_prompt = build_retrieval_first_prompt("样例问题", retrieval=pair_retrieval)
+        assert "相似真实样本" in retrieval_prompt
+        assert infer_scene_label("你能看下这个代码吗", chat_type="private") == "formal_or_worklike"
+        ranked = style_rerank_candidates(
+            ["您好，请问有什么可以帮您", "行我看下", "这个问题我无法处理"],
+            scene_label="private_short_casual",
+        )
+        assert ranked[0]["text"] == "行我看下"
+        assert any(not item["accepted"] for item in ranked)
 
         low_context = build_style_generation_context(
             "zzzzzzzzzz",
