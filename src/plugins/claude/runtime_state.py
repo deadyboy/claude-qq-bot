@@ -13,6 +13,7 @@ DEFAULT_STATE: Dict[str, Any] = {
     "auto_memory_enabled": True,
     "style_raw_fewshot_enabled": False,
     "style_auto_reply_enabled": False,
+    "style_teaching_enabled": False,
 }
 
 
@@ -73,4 +74,16 @@ def set_style_auto_reply_enabled(enabled: bool) -> None:
     """设置受控代聊自动回复开关。"""
     state = load_state()
     state["style_auto_reply_enabled"] = bool(enabled)
+    save_state(state)
+
+
+def is_style_teaching_enabled() -> bool:
+    """影子教学/审核模式是否启用。"""
+    return bool(load_state().get("style_teaching_enabled", False))
+
+
+def set_style_teaching_enabled(enabled: bool) -> None:
+    """设置影子教学/审核模式开关。"""
+    state = load_state()
+    state["style_teaching_enabled"] = bool(enabled)
     save_state(state)

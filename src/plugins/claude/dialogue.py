@@ -29,6 +29,7 @@ from .confirmation import (
 from .permissions import (
     access_store,
     format_permission_status,
+    get_owner_ids,
     is_owner_event,
     owner_required_message,
 )
@@ -36,8 +37,10 @@ from .runtime_state import is_auto_memory_enabled, set_auto_memory_enabled
 from .runtime_state import (
     is_style_auto_reply_enabled,
     is_style_raw_fewshot_enabled,
+    is_style_teaching_enabled,
     set_style_auto_reply_enabled,
     set_style_raw_fewshot_enabled,
+    set_style_teaching_enabled,
 )
 from .safe_tools import (
     TodoStore,
@@ -68,8 +71,15 @@ from .style_distill import (
     format_style_relationship_report,
     format_style_scene_report,
     find_source_for_target,
+    generate_retrieval_first_reply_candidates,
     retrieve_similar_style_samples,
     run_qce_style_distillation,
+)
+from .style_teaching import (
+    format_recent_reviews,
+    format_teaching_review_window,
+    format_teaching_status,
+    teaching_store,
 )
 
 # 智能体引擎 (可选启用)
@@ -360,6 +370,39 @@ def is_style_draft_command(event: MessageEvent) -> bool:
     )
 
 
+def is_teaching_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/teach"
+        or lowered.startswith("/teach ")
+        or text == "/教学"
+        or text.startswith("/教学 ")
+        or text.startswith("/教学：")
+        or text.startswith("/教学:")
+        or text == "教学"
+        or text.startswith("教学 ")
+        or text.startswith("教学：")
+        or text.startswith("教学:")
+        or text == "/采纳"
+        or text.startswith("/采纳 ")
+        or text.startswith("/采纳：")
+        or text.startswith("/采纳:")
+        or text == "/评分"
+        or text.startswith("/评分 ")
+        or text.startswith("/评分：")
+        or text.startswith("/评分:")
+        or text == "/改成"
+        or text.startswith("/改成 ")
+        or text.startswith("/改成：")
+        or text.startswith("/改成:")
+        or text == "/拒绝"
+        or text.startswith("/拒绝 ")
+        or text.startswith("/拒绝：")
+        or text.startswith("/拒绝:")
+    )
+
+
 def is_style_command(event: MessageEvent) -> bool:
     text = get_plain_text(event)
     lowered = text.lower()
@@ -591,6 +634,45 @@ def parse_style_switch_payload(payload: str) -> str:
     return payload.strip(" ：:").lower()
 
 
+def parse_teaching_payload(text: str) -> tuple[str, str]:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    prefixes = (
+        ("/teach", "control"),
+        ("/教学", "control"),
+        ("教学", "control"),
+        ("/采纳", "accept"),
+        ("/评分", "rate"),
+        ("/改成", "correct"),
+        ("/拒绝", "reject"),
+    )
+    for prefix, action in prefixes:
+        if lowered == prefix.lower():
+            return action, ""
+        if lowered.startswith(prefix.lower() + " "):
+            return action, stripped[len(prefix):].strip(" ：:")
+        if stripped.startswith(prefix + "：") or stripped.startswith(prefix + ":"):
+            return action, stripped[len(prefix) + 1:].strip()
+    return "control", stripped
+
+
+def _split_review_payload(payload: str) -> tuple[str, str]:
+    parts = payload.strip().split(maxsplit=1)
+    if not parts:
+        return "", ""
+    return parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
+
+
+def _resolve_review_for_feedback(payload: str, actor_id: str | int) -> tuple[str, str]:
+    first, rest = _split_review_payload(payload)
+    if first.startswith("T") or first.startswith("t"):
+        return first, rest
+    latest = teaching_store.latest_for_reviewer(actor_id)
+    if not latest:
+        return "", payload.strip()
+    return str(latest.get("id") or ""), payload.strip()
+
+
 def _is_switch_on(value: str) -> bool:
     return value in {"开", "开启", "on", "enable", "enabled", "true", "1"}
 
@@ -703,6 +785,76 @@ async def send_qq_text(bot: nonebot.adapters.onebot.v11.Bot, event: MessageEvent
         raise
 
 
+async def send_owner_private_text(bot: nonebot.adapters.onebot.v11.Bot, owner_id: str, text: str) -> bool:
+    """Send a private teaching/review message to one owner."""
+    try:
+        for part in split_qq_msg(text):
+            await bot.call_api("send_private_msg", user_id=int(owner_id), message=part)
+        return True
+    except Exception as e:
+        write_runtime_error("send_owner_private_text", e)
+        return False
+
+
+async def generate_teaching_candidates(
+    text: str,
+    *,
+    chat_type: str,
+    target_id: str,
+    actor_id: str | int,
+    recent_dialogue: list[dict] | None = None,
+) -> tuple[list[str], dict]:
+    """Generate up to three owner-style candidates for review, without sending them to the contact."""
+    metadata: dict[str, Any] = {"generator": "retrieval_first"}
+    candidates: list[str] = []
+    try:
+        retrieval_result = await generate_retrieval_first_reply_candidates(
+            text,
+            current_context=recent_dialogue,
+            chat_type=chat_type,
+            target_id=target_id,
+        )
+        metadata["retrieval"] = {
+            "ok": retrieval_result.get("ok"),
+            "run_id": retrieval_result.get("run_id"),
+            "scene_label": retrieval_result.get("scene_label"),
+            "result_count": (retrieval_result.get("retrieval") or {}).get("result_count"),
+        }
+        for item in retrieval_result.get("candidates") or []:
+            if not item.get("accepted"):
+                continue
+            candidate = str(item.get("text") or "").strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+            if len(candidates) >= 3:
+                break
+    except Exception as e:
+        metadata["retrieval_error"] = type(e).__name__
+        write_runtime_error("generate_teaching_candidates_retrieval", e)
+
+    if len(candidates) < 3:
+        try:
+            fallback = await generate_style_draft(
+                text,
+                include_raw_fewshot=is_style_raw_fewshot_enabled(),
+                chat_type=chat_type,
+                target_id=target_id,
+                actor_id=actor_id,
+                scope=chat_type,
+                auto_reply=False,
+                recent_dialogue=recent_dialogue,
+            )
+            fallback = format_reply(fallback)
+            if fallback and fallback not in candidates:
+                candidates.append(fallback)
+            metadata["fallback"] = "style_draft"
+        except Exception as e:
+            metadata["fallback_error"] = type(e).__name__
+            write_runtime_error("generate_teaching_candidates_fallback", e)
+
+    return candidates[:3], metadata
+
+
 def write_runtime_error(scope: str, error: Exception):
     """写入运行期异常，便于独立窗口运行时排查。"""
     log_dir = Path("data/logs")
@@ -795,10 +947,10 @@ def _looks_like_command_text(text: str) -> bool:
     stripped = text.strip()
     if stripped.startswith("/"):
         return True
-    exact_commands = {"时间", "状态", "权限", "工具", "我的资料", "记忆开关", "待办", "风格", "白名单", "代聊"}
+    exact_commands = {"时间", "状态", "权限", "工具", "我的资料", "记忆开关", "待办", "风格", "白名单", "代聊", "教学"}
     if stripped in exact_commands:
         return True
-    command_prefixes = ("记住", "忘记", "待办", "计算", "记忆查询", "风格", "白名单", "代聊")
+    command_prefixes = ("记住", "忘记", "待办", "计算", "记忆查询", "风格", "白名单", "代聊", "教学", "采纳", "评分", "改成", "拒绝")
     return any(
         stripped.startswith(prefix + sep)
         for prefix in command_prefixes
@@ -860,6 +1012,80 @@ async def maybe_handle_style_auto_reply(
     return True
 
 
+async def maybe_handle_style_teaching_review(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    text: str,
+) -> bool:
+    """Shadow mode: generate candidates for owner review instead of replying to trusted contacts."""
+    if not is_style_teaching_enabled():
+        return False
+    if not text.strip() or _looks_like_command_text(text):
+        return False
+    if isinstance(event, GroupMessageEvent):
+        return False
+    if is_owner_event(event):
+        return False
+
+    chat_type, target_id, trusted = _style_auto_scope(event)
+    if not trusted:
+        return False
+    owner_ids = sorted(get_owner_ids())
+    if not owner_ids:
+        return False
+
+    from .memory import session_manager as simple_session_manager
+    session_id = get_session_id(event)
+    history = await simple_session_manager.get_messages(session_id)
+    await simple_session_manager.add_message(session_id, "user", text)
+
+    candidates, metadata = await generate_teaching_candidates(
+        text,
+        chat_type=chat_type,
+        target_id=target_id,
+        actor_id=getattr(event, "user_id", ""),
+        recent_dialogue=history,
+    )
+    if not candidates:
+        confirmation_store.log(
+            {
+                "id": "teach_fail",
+                "type": "style_teaching_review",
+                "summary": "教学模式生成候选失败",
+            },
+            actor_id=getattr(event, "user_id", ""),
+            status="failed",
+            result=f"target={target_id}",
+        )
+        return True
+
+    review = teaching_store.create_review(
+        message=text,
+        candidates=candidates,
+        chat_type=chat_type,
+        target_id=target_id,
+        trigger="shadow",
+        recent_dialogue=history,
+        reviewer_ids=owner_ids,
+        metadata=metadata,
+    )
+    window = format_teaching_review_window(review)
+    sent = False
+    for owner_id in owner_ids:
+        sent = await send_owner_private_text(bot, owner_id, window) or sent
+    confirmation_store.log(
+        {
+            "id": str(review.get("id") or "")[:16],
+            "type": "style_teaching_review",
+            "summary": "教学模式生成候选并发送主人审核",
+        },
+        actor_id=getattr(event, "user_id", ""),
+        status="executed" if sent else "notify_failed",
+        result=f"target={target_id};candidates={len(candidates)}",
+    )
+    return True
+
+
 # ========== 简单模式处理器 (向后兼容) ==========
 
 simple_chat_handler = on_message(priority=5, block=False)
@@ -897,6 +1123,8 @@ async def handle_simple_chat(
     if not text and not images:
         return
 
+    if await maybe_handle_style_teaching_review(bot, event, text):
+        return
     if await maybe_handle_style_auto_reply(bot, event, text):
         return
     if is_style_auto_reply_enabled():
@@ -1124,6 +1352,7 @@ async def handle_basic_status(
         f"- API Base：{model_config.get_current_api_base()}",
         f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",
         f"- 代聊自动回复：{'开' if is_style_auto_reply_enabled() else '关'}",
+        f"- 教学影子审核：{'开' if is_style_teaching_enabled() else '关'}",
         f"- 真实原句 few-shot：{'开' if is_style_raw_fewshot_enabled() else '关'}",
         f"- 你的资料：{len(profile.get('items') or [])} 条",
         f"- 最近错误：{get_latest_error_header()}",
@@ -1516,6 +1745,147 @@ async def handle_memory_query(
     )
 
 
+teaching_cmd = on_message(rule=is_teaching_command, priority=4, block=True)
+
+
+@teaching_cmd.handle()
+async def handle_teaching_command(
+    bot: nonebot.adapters.onebot.v11.Bot,
+    event: MessageEvent,
+    state: T_State,
+):
+    """Owner teaching/review loop for style drafts."""
+    if not should_handle_targeted_event(event, bot):
+        return
+    if not await require_owner(bot, event, "风格教学"):
+        return
+    if isinstance(event, GroupMessageEvent):
+        await send_qq_text(bot, event, "教学审核请在私聊中使用，避免把草稿和反馈公开到群聊。")
+        return
+
+    action, payload = parse_teaching_payload(get_plain_text(event))
+    actor_id = event.user_id
+
+    if action == "control":
+        switch = payload.strip().lower()
+        if not switch or switch in {"状态", "status", "查看"}:
+            await send_qq_text(
+                bot,
+                event,
+                format_teaching_status(is_style_teaching_enabled(), teaching_store.feedback_stats()),
+            )
+            return
+        if switch in {"最近", "recent", "列表", "list"}:
+            await send_qq_text(bot, event, format_recent_reviews(teaching_store.list_recent(actor_id)))
+            return
+        if switch in {"复盘", "summary", "统计", "stats"}:
+            await send_qq_text(
+                bot,
+                event,
+                format_teaching_status(is_style_teaching_enabled(), teaching_store.feedback_stats()),
+            )
+            return
+        if _is_switch_on(switch):
+            set_style_teaching_enabled(True)
+            confirmation_store.log(
+                {
+                    "id": "teach_on",
+                    "type": "style_teaching_set",
+                    "summary": "开启 owner-style 教学影子审核",
+                },
+                actor_id=actor_id,
+                status="executed",
+                result="enabled=true",
+            )
+            await send_qq_text(bot, event, "教学影子审核已开启。信任用户私聊会生成候选并私发给主人，不自动回复对方。")
+            return
+        if _is_switch_off(switch):
+            set_style_teaching_enabled(False)
+            confirmation_store.log(
+                {
+                    "id": "teach_off",
+                    "type": "style_teaching_set",
+                    "summary": "关闭 owner-style 教学影子审核",
+                },
+                actor_id=actor_id,
+                status="executed",
+                result="enabled=false",
+            )
+            await send_qq_text(bot, event, "教学影子审核已关闭。")
+            return
+        await send_qq_text(bot, event, "用法：/教学 状态；/教学 开；/教学 关；/教学 最近；/采纳 <id> <1-3>；/改成 <id> <正确回复>")
+        return
+
+    review_id, rest = _resolve_review_for_feedback(payload, actor_id)
+    if not review_id:
+        await send_qq_text(bot, event, "没有可用的教学样本。请先开启 /教学 开，或使用完整格式：/采纳 <id> <1-3>。")
+        return
+
+    if action == "accept":
+        first, reason = _split_review_payload(rest)
+        try:
+            selected = int(first)
+        except (TypeError, ValueError):
+            await send_qq_text(bot, event, "用法：/采纳 <id> <1-3> [原因]；也可对最近样本用 /采纳 1")
+            return
+        ok, msg, _ = teaching_store.record_feedback(
+            review_id,
+            actor_id=actor_id,
+            action="accept",
+            rating=5,
+            selected_index=selected,
+            reason=reason,
+        )
+        await send_qq_text(bot, event, msg if ok else f"记录失败：{msg}")
+        return
+
+    if action == "rate":
+        first, reason = _split_review_payload(rest)
+        try:
+            rating = int(first)
+        except (TypeError, ValueError):
+            await send_qq_text(bot, event, "用法：/评分 <id> <1-5> [原因]；也可对最近样本用 /评分 3 太正式")
+            return
+        ok, msg, _ = teaching_store.record_feedback(
+            review_id,
+            actor_id=actor_id,
+            action="rate",
+            rating=rating,
+            reason=reason,
+        )
+        await send_qq_text(bot, event, msg if ok else f"记录失败：{msg}")
+        return
+
+    if action == "correct":
+        corrected = rest.strip()
+        if not corrected:
+            await send_qq_text(bot, event, "用法：/改成 <id> <你会怎么回>；也可对最近样本用 /改成 在，咋了")
+            return
+        ok, msg, _ = teaching_store.record_feedback(
+            review_id,
+            actor_id=actor_id,
+            action="correct",
+            rating=5,
+            corrected_reply=corrected,
+        )
+        await send_qq_text(bot, event, msg if ok else f"记录失败：{msg}")
+        return
+
+    if action == "reject":
+        reason = rest.strip() or "未说明"
+        ok, msg, _ = teaching_store.record_feedback(
+            review_id,
+            actor_id=actor_id,
+            action="reject",
+            rating=1,
+            reason=reason,
+        )
+        await send_qq_text(bot, event, msg if ok else f"记录失败：{msg}")
+        return
+
+    await send_qq_text(bot, event, "用法：/教学 状态；/采纳 <id> <1-3>；/评分 <id> <1-5>；/改成 <id> <正确回复>；/拒绝 <id> <原因>")
+
+
 style_draft_cmd = on_message(rule=is_style_draft_command, priority=4, block=True)
 
 
@@ -1545,7 +1915,21 @@ async def handle_style_draft(
             actor_id=event.user_id,
             scope="private",
         )
-        response = "草稿：\n" + format_reply(draft)
+        draft_text = format_reply(draft)
+        review = teaching_store.create_review(
+            message=payload,
+            candidates=[draft_text],
+            chat_type="private",
+            target_id=event.user_id,
+            trigger="manual_draft",
+            reviewer_ids=[str(event.user_id)],
+            metadata={"generator": "style_draft"},
+        )
+        response = (
+            f"草稿 #{review.get('id')}：\n"
+            f"{draft_text}\n\n"
+            f"可反馈：/评分 {review.get('id')} 1-5 原因；/改成 {review.get('id')} 你的正确回复"
+        )
         for part in split_qq_msg(response):
             await send_qq_text(bot, event, part)
     except Exception as e:
@@ -1810,6 +2194,7 @@ async def handle_help_basic(
         "- 记忆查询 关键词：搜索你的资料",
         "- /风格 查看/导入/导入文件/设置：主人维护风格画像",
         "- /用我的风格回复：...：主人生成风格草稿",
+        "- /教学 开/关：主人开启影子审核并用 /采纳、/评分、/改成 记录反馈",
     ])
     await send_qq_text(bot, event, msg)
 

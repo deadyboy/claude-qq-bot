@@ -65,13 +65,18 @@ from src.plugins.claude.style_distill import (
     run_qce_style_distillation,
     style_rerank_candidates,
 )
+from src.plugins.claude.style_teaching import (
+    TeachingReviewStore,
+    format_teaching_review_window,
+    format_teaching_status,
+)
 from src.plugins.claude import runtime_state
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/8] 测试短期记忆...")
+    print("[1/9] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -93,7 +98,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/8] 测试关键事实...")
+    print("[2/9] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -135,7 +140,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/8] 测试自动记忆规则...")
+    print("[3/9] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -162,7 +167,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/8] 测试低风险工具...")
+    print("[4/9] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -203,7 +208,7 @@ async def test_safe_tools():
 
 async def test_permissions():
     """测试 owner 权限辅助函数。"""
-    print("[5/8] 测试权限辅助函数...")
+    print("[5/9] 测试权限辅助函数...")
 
     owner_ids = parse_owner_ids("123, 456；789  100")
     assert owner_ids == {"123", "456", "789", "100"}
@@ -289,7 +294,7 @@ async def test_permissions():
 
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
-    print("[6/8] 测试风格画像...")
+    print("[6/9] 测试风格画像...")
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
     try:
@@ -421,7 +426,7 @@ async def test_style_profile():
 
 async def test_style_distill():
     """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
-    print("[7/8] 测试 Stage 5B 离线蒸馏...")
+    print("[7/9] 测试 Stage 5B 离线蒸馏...")
 
     root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
     input_dir = root / "input"
@@ -675,9 +680,75 @@ async def test_style_distill():
     print("      通过")
     return True
 
+
+async def test_style_teaching():
+    """测试风格教学反馈存储"""
+    print("[8/9] 测试风格教学反馈...")
+    root = Path("data") / f"test_style_teaching_{RUN_ID}"
+    store = TeachingReviewStore(
+        active_path=root / "teaching_reviews.json",
+        feedback_path=root / "teaching_feedback.jsonl",
+    )
+    try:
+        review = store.create_review(
+            message="你现在忙不忙",
+            candidates=["咋了", "有事？", "我看下"],
+            chat_type="private",
+            target_id="2000000002",
+            trigger="shadow",
+            reviewer_ids=["1000000001"],
+            metadata={"scene_label": "private_short_casual"},
+        )
+        assert review["id"].startswith("T")
+        window = format_teaching_review_window(review)
+        assert "教学审核" in window
+        assert "候选" in window
+        assert "咋了" in window
+
+        latest = store.latest_for_reviewer("1000000001")
+        assert latest and latest["id"] == review["id"]
+
+        ok, msg, feedback = store.record_feedback(
+            review["id"],
+            actor_id="1000000001",
+            action="accept",
+            rating=5,
+            selected_index=1,
+            reason="最像",
+        )
+        assert ok, msg
+        assert feedback and feedback["selected_candidate"] == "咋了"
+        stats = store.feedback_stats()
+        assert stats["feedback_count"] == 1
+        assert stats["action_counts"]["accept"] == 1
+        assert "教学模式" in format_teaching_status(True, stats)
+
+        review2 = store.create_review(
+            message="这个今天能弄完吗",
+            candidates=["我看下", "等下看看"],
+            reviewer_ids=["1000000001"],
+        )
+        ok, msg, feedback = store.record_feedback(
+            review2["id"],
+            actor_id="1000000001",
+            action="correct",
+            rating=5,
+            corrected_reply="我先看下，别等我这边确定",
+        )
+        assert ok, msg
+        assert feedback and "别等我" in feedback["corrected_reply"]
+        print("      通过")
+        return True
+    finally:
+        store.clear_for_tests()
+        if root.exists():
+            import shutil
+            shutil.rmtree(root)
+
+
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[8/8] 测试统一记忆管理器...")
+    print("[9/9] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -784,6 +855,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("Stage 5B 离线蒸馏", False))
+
+    try:
+        results.append(("风格教学反馈", await test_style_teaching()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("风格教学反馈", False))
 
     try:
         results.append(("统一记忆", await test_unified()))
