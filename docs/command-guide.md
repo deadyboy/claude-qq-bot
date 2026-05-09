@@ -639,7 +639,7 @@ data/style_profiles/import_inbox/
 
 ### `/教学`
 
-开启或关闭 owner-style 影子审核模式。开启后，信任用户私聊不会自动回复对方；bot 会把对方消息和 1-3 条候选回复私发给主人，由主人评分、采纳、改写或拒绝。
+开启或关闭 owner-style 影子审核模式。开启后，信任用户私聊不会自动回复对方；bot 会把对方消息和最多 8 条候选回复私发给主人，由主人评分、采纳、改写或拒绝。
 
 权限：Owner-only、Private-only。
 
@@ -653,12 +653,15 @@ data/style_profiles/import_inbox/
 /教学 复盘
 /教学 出题 10
 /教学 出题 10 private_short_casual
+/教学 纠正
+/教学 纠正 最近
+/教学 纠正 停用 <纠正ID>
 ```
 
 反馈命令：
 
 ```text
-/采纳 <教学ID> <1-3> [原因]
+/采纳 <教学ID> <1-8> [原因]
 /评分 <教学ID> <1-5> [原因]
 /改成 <教学ID> <你会怎么回>
 /拒绝 <教学ID> <原因>
@@ -675,9 +678,10 @@ data/style_profiles/import_inbox/
 
 说明：
 
-- 教学模式复用现有风格生成和 Stage 5B RAG，不另起一套重复生成逻辑。
+- 教学模式复用现有风格生成、Stage 5B RAG 和 `36.skill` 运行时人格层，不另起一套重复生成逻辑。
 - `/教学 出题` 会从 `sft_candidates.jsonl` 抽取文本可归因的高质量历史样本，批量生成审核题；适合快速积累评分和改写反馈。
 - 反馈写入 `data/style_profiles/teaching_feedback.jsonl`，用于后续回放评估、rerank 规则和训练样本筛选。
+- `/改成` 会同时写入 `data/style_profiles/36_skill/corrections.jsonl`，作为下一次生成主动读取的纠正层。
 - 影子审核只对信任用户私聊生效；群聊和非信任用户不会进入该模式。
 - `/代聊` 自动回复和 `/教学` 影子审核是两种运行模式；需要人工参与优化时优先用 `/教学 开`。
 

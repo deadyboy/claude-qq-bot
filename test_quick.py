@@ -73,6 +73,15 @@ from src.plugins.claude.style_teaching import (
     format_teaching_review_window,
     format_teaching_status,
 )
+from src.plugins.claude.style_skill import (
+    candidate_correction_delta,
+    deactivate_correction,
+    format_recent_corrections,
+    format_style_skill_context_for_prompt,
+    load_corrections,
+    load_style_skill_context,
+    select_relevant_corrections,
+)
 from src.plugins.claude import runtime_state
 
 RUN_ID = uuid.uuid4().hex[:8]
@@ -723,14 +732,68 @@ async def test_style_distill():
         pair_retrieval_text = json.dumps(pair_retrieval, ensure_ascii=False)
         assert "样例回复A" in pair_retrieval_text
         retrieval_prompt = build_retrieval_first_prompt("样例问题", retrieval=pair_retrieval)
-        assert "相似真实样本" in retrieval_prompt
+        assert "相似样本元数据" in retrieval_prompt
+        assert "样例回复A" not in retrieval_prompt
+        raw_retrieval_prompt = build_retrieval_first_prompt(
+            "样例问题",
+            retrieval=pair_retrieval,
+            include_raw_samples=True,
+        )
+        assert "相似真实样本" in raw_retrieval_prompt
+        assert "样例回复A" in raw_retrieval_prompt
+        assert infer_scene_label(
+            "在不在",
+            chat_type="private",
+            current_context=[{"role": "other", "content": "在不在"}],
+        ) == "private_short_casual"
+        assert infer_scene_label("你给我讲下这个大概是什么逻辑", chat_type="private") == "private_long_explain"
         assert infer_scene_label("你能看下这个代码吗", chat_type="private") == "formal_or_worklike"
         ranked = style_rerank_candidates(
-            ["您好，请问有什么可以帮您", "行我看下", "这个问题我无法处理"],
+            ["您好，请问有什么可以帮您", "[\"行我看下\"]", "这个问题我无法处理"],
             scene_label="private_short_casual",
         )
         assert ranked[0]["text"] == "行我看下"
         assert any(not item["accepted"] for item in ranked)
+        copied_ranked = style_rerank_candidates(
+            ["行我看下", "我看看"],
+            scene_label="private_short_casual",
+            historical_targets=["行我看下"],
+        )
+        assert copied_ranked[0]["text"] == "我看看"
+        assert any(item["text"] == "行我看下" and not item["accepted"] for item in copied_ranked)
+        state_ranked = style_rerank_candidates(
+            ["不忙，来", "咋了", "在的"],
+            scene_label="private_short_casual",
+            latest_message="你现在忙吗",
+        )
+        assert state_ranked[0]["text"] == "咋了"
+        assert any(item["text"] == "不忙，来" and not item["accepted"] for item in state_ranked)
+        task_ranked = style_rerank_candidates(
+            ["快了", "难说", "我看看"],
+            scene_label="private_short_casual",
+            latest_message="这个你今天能弄完吗",
+        )
+        assert task_ranked[0]["text"] != "快了"
+        assert any(item["text"] == "快了" and not item["accepted"] for item in task_ranked)
+        credential_ranked = style_rerank_candidates(
+            ["行，发你", "别乱搞我号", "不行吧"],
+            scene_label="private_short_casual",
+            latest_message="你直接把你账号发我我登一下",
+        )
+        assert credential_ranked[0]["text"] != "行，发你"
+        assert any(item["text"] == "行，发你" and not item["accepted"] for item in credential_ranked)
+        invalid_ranked = style_rerank_candidates([",", "啥"], latest_message="[图片] 这个咋样")
+        assert invalid_ranked[0]["text"] == "啥"
+        assert any(item["text"] == "," and not item["accepted"] for item in invalid_ranked)
+        corrected_ranked = style_rerank_candidates(
+            ["我看下", "我先看下，别等我这边确定"],
+            scene_label="formal_or_worklike",
+            corrections=[{
+                "corrected_reply": "我先看下，别等我这边确定",
+                "bad_candidates": ["我看下"],
+            }],
+        )
+        assert corrected_ranked[0]["text"] == "我先看下，别等我这边确定"
 
         low_context = build_style_generation_context(
             "zzzzzzzzzz",
@@ -760,24 +823,39 @@ async def test_style_teaching():
     """测试风格教学反馈存储"""
     print("[8/9] 测试风格教学反馈...")
     root = Path("data") / f"test_style_teaching_{RUN_ID}"
+    skill_root = root / "36_skill"
     store = TeachingReviewStore(
         active_path=root / "teaching_reviews.json",
         feedback_path=root / "teaching_feedback.jsonl",
+        corrections_path=skill_root / "corrections.jsonl",
     )
     try:
+        (skill_root / "relationship_profiles").mkdir(parents=True, exist_ok=True)
+        (skill_root / "global_persona.md").write_text("短句，像真实熟人聊天。", encoding="utf-8")
+        (skill_root / "style_rules.md").write_text("禁止 AI 助手腔；不要承诺未知现实状态。", encoding="utf-8")
+        (skill_root / "memory_patterns.md").write_text("熟人私聊先顺着上下文接话。", encoding="utf-8")
+        (skill_root / "relationship_profiles" / "2000000002.md").write_text(
+            "熟人私聊，轻松直接；承诺类问题先保守接住。",
+            encoding="utf-8",
+        )
         review = store.create_review(
             message="你现在忙不忙",
-            candidates=["咋了", "有事？", "我看下"],
+            candidates=["咋了", "有事？", "我看下", "啥事", "怎么了", "等下", "发我", "我瞅瞅"],
             chat_type="private",
             target_id="2000000002",
             trigger="shadow",
             reviewer_ids=["1000000001"],
-            metadata={"scene_label": "private_short_casual"},
+            metadata={
+                "scene_label": "private_short_casual",
+                "style_skill": {"relationship_profile_found": True, "correction_hit_count": 0},
+            },
         )
         assert review["id"].startswith("T")
+        assert len(review["candidates"]) == 8
         window = format_teaching_review_window(review)
         assert "教学审核" in window
         assert "候选" in window
+        assert "36.skill" in window
         assert "咋了" in window
 
         latest = store.latest_for_reviewer("1000000001")
@@ -812,6 +890,42 @@ async def test_style_teaching():
         )
         assert ok, msg
         assert feedback and "别等我" in feedback["corrected_reply"]
+        assert feedback.get("correction_id")
+        correction_file_text = (skill_root / "corrections.jsonl").read_text(encoding="utf-8")
+        assert "这个今天能弄完吗" not in correction_file_text
+        assert "recent_dialogue" not in correction_file_text
+        corrections = load_corrections(path=skill_root / "corrections.jsonl")
+        assert len(corrections) == 1
+        assert not corrections[0].get("message")
+        assert corrections[0].get("message_hash")
+        assert corrections[0].get("message_terms")
+        relevant = select_relevant_corrections(
+            "这个今天能弄完吗",
+            chat_type="private",
+            target_id="2000000002",
+            path=skill_root / "corrections.jsonl",
+        )
+        assert relevant
+        context = load_style_skill_context(
+            chat_type="private",
+            target_id="2000000002",
+            scene_label="formal_or_worklike",
+            latest_message="这个今天能弄完吗",
+            root=skill_root,
+        )
+        assert context["relationship_profile_found"]
+        assert context["correction_hit_count"] == 1
+        prompt_context = format_style_skill_context_for_prompt(context)
+        assert "36.skill" in prompt_context
+        assert "我先看下" in prompt_context
+        assert "这个今天能弄完吗" not in prompt_context
+        delta_good, _ = candidate_correction_delta("我先看下，别等我这边确定", corrections)
+        delta_bad, _ = candidate_correction_delta("我看下", corrections)
+        assert delta_good > delta_bad
+        assert "最近教学纠正" in format_recent_corrections(path=skill_root / "corrections.jsonl")
+        ok, msg = deactivate_correction(feedback["correction_id"], actor_id="1000000001", path=skill_root / "corrections.jsonl")
+        assert ok, msg
+        assert not load_corrections(path=skill_root / "corrections.jsonl")
 
         run_dir = root / "stage5b_test"
         run_dir.mkdir(parents=True, exist_ok=True)

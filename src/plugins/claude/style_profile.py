@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 from .api import llm_client
 from .auto_memory import contains_sensitive_content
+from .style_skill import format_style_skill_context_for_prompt, load_style_skill_context
 
 
 STYLE_PROFILE_DIR = Path("data/style_profiles")
@@ -1087,6 +1088,7 @@ def format_recent_dialogue_for_prompt(messages: List[Dict[str, Any]] | None, lim
 def build_style_system_prompt(
     profile: Dict[str, Any],
     generation_context: Dict[str, Any] | None = None,
+    style_skill_context: Dict[str, Any] | None = None,
 ) -> str:
     data = normalize_style_profile(profile)
     lines = [
@@ -1097,10 +1099,15 @@ def build_style_system_prompt(
         "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，生成自然但不确认事实的草稿，例如“咋啦”“啥事”“我看下”，不要直接替主人回答“在家/不忙/已经做了”。",
         "不要连续重复同一句或同一个口头禅；如果最近已经说过“刚看到”，下一条不要再用。",
         "遇到[表情]、[动画表情]、[图片]时，可以按语气接话，但不要假装看清图片具体内容。",
+    ]
+    skill_prompt = format_style_skill_context_for_prompt(style_skill_context)
+    if skill_prompt:
+        lines.append(skill_prompt)
+    lines.extend([
         f"语气：{data['tone']}",
         f"长度：{data['length']}",
         f"表情：{data['emoji']}",
-    ]
+    ])
     if data.get("habits"):
         lines.append("表达习惯：")
         lines.extend(f"- {item}" for item in data["habits"][:10])
@@ -1198,6 +1205,7 @@ async def generate_style_draft(
 
     profile = store.load()
     generation_context = None
+    style_skill_context = None
     try:
         from .style_distill import build_style_generation_context
         if include_raw_fewshot is None:
@@ -1212,6 +1220,17 @@ async def generate_style_draft(
         )
     except Exception:
         generation_context = None
+    scene_label = ""
+    if generation_context and generation_context.get("ok"):
+        similar_samples = generation_context.get("similar_samples") or []
+        if similar_samples:
+            scene_label = str(similar_samples[0].get("scene_label") or "")
+    style_skill_context = load_style_skill_context(
+        chat_type=chat_type,
+        target_id=target_id,
+        scene_label=scene_label,
+        latest_message=target,
+    )
     _audit_style_generation(
         actor_id=actor_id,
         target_id=target_id,
@@ -1229,6 +1248,6 @@ async def generate_style_draft(
     ])
     return await llm_client.chat(
         messages=[{"role": "user", "content": "\n".join(user_prompt_parts)}],
-        system_prompt=build_style_system_prompt(profile, generation_context),
+        system_prompt=build_style_system_prompt(profile, generation_context, style_skill_context),
         temperature=0.6,
     )

@@ -82,7 +82,7 @@ def _normalize_review(raw: Any) -> Dict[str, Any] | None:
         candidate
         for candidate in (_normalize_candidate(item) for item in raw.get("candidates") or [])
         if candidate
-    ][:5]
+    ][:8]
     if not candidates:
         return None
     return {
@@ -118,9 +118,11 @@ class TeachingReviewStore:
         self,
         active_path: Path | str = ACTIVE_REVIEWS_PATH,
         feedback_path: Path | str = FEEDBACK_LOG_PATH,
+        corrections_path: Path | str | None = None,
     ):
         self.active_path = Path(active_path)
         self.feedback_path = Path(feedback_path)
+        self.corrections_path = Path(corrections_path) if corrections_path is not None else None
 
     def _load_active(self) -> Dict[str, Dict[str, Any]]:
         if not self.active_path.exists():
@@ -163,7 +165,7 @@ class TeachingReviewStore:
         reviewer_ids: List[str] | None = None,
         metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        clean_candidates = [candidate for candidate in (_normalize_candidate(item) for item in candidates) if candidate][:5]
+        clean_candidates = [candidate for candidate in (_normalize_candidate(item) for item in candidates) if candidate][:8]
         if not clean_candidates:
             raise ValueError("至少需要 1 条候选回复。")
         review_id = "T" + uuid.uuid4().hex[:7]
@@ -253,15 +255,36 @@ class TeachingReviewStore:
             "reason": _clean_text(reason, 500),
             "source": review.get("source") or {},
             "message": review.get("message") or "",
+            "recent_dialogue": review.get("recent_dialogue") or [],
             "candidates": review.get("candidates") or [],
             "metadata": review.get("metadata") or {},
         }
+        correction_id = ""
+        correction_error = ""
+        if action == "correct":
+            try:
+                from .style_skill import append_correction_from_feedback
+                if self.corrections_path is not None:
+                    correction = append_correction_from_feedback(entry, path=self.corrections_path)
+                else:
+                    correction = append_correction_from_feedback(entry)
+                if correction:
+                    correction_id = str(correction.get("id") or "")
+                    entry["correction_id"] = correction_id
+            except Exception as e:
+                correction_error = type(e).__name__
+                entry["correction_error"] = correction_error
         self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
         with self.feedback_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
         review["status"] = "reviewed"
         reviews[review["id"]] = review
         self._save_active(reviews)
+        if action == "correct" and correction_id:
+            return True, f"已记录教学反馈，并写入纠正层：{correction_id}。", deepcopy(entry)
+        if action == "correct":
+            suffix = f"：{correction_error}" if correction_error else "。"
+            return True, f"已记录教学反馈，但纠正层未写入{suffix}", deepcopy(entry)
         return True, "已记录教学反馈。", deepcopy(entry)
 
     def feedback_stats(self) -> Dict[str, Any]:
@@ -271,7 +294,16 @@ class TeachingReviewStore:
             "rating_counts": {},
             "latest_time": "",
             "pending_count": len([item for item in self._load_active().values() if item.get("status") == "pending"]),
+            "corrections": {},
         }
+        try:
+            from .style_skill import correction_stats
+            if self.corrections_path is not None:
+                stats["corrections"] = correction_stats(path=self.corrections_path)
+            else:
+                stats["corrections"] = correction_stats()
+        except Exception:
+            stats["corrections"] = {}
         if not self.feedback_path.exists():
             return stats
         with self.feedback_path.open("r", encoding="utf-8") as f:
@@ -294,7 +326,10 @@ class TeachingReviewStore:
         return stats
 
     def clear_for_tests(self) -> None:
-        for path in (self.active_path, self.feedback_path):
+        paths = [self.active_path, self.feedback_path]
+        if self.corrections_path is not None:
+            paths.append(self.corrections_path)
+        for path in paths:
             if path.exists():
                 path.unlink()
 
@@ -377,10 +412,19 @@ teaching_store = TeachingReviewStore()
 
 def format_teaching_review_window(review: Dict[str, Any]) -> str:
     source = review.get("source") or {}
+    metadata = review.get("metadata") if isinstance(review.get("metadata"), dict) else {}
+    retrieval = metadata.get("retrieval") if isinstance(metadata.get("retrieval"), dict) else {}
+    style_skill = metadata.get("style_skill") if isinstance(metadata.get("style_skill"), dict) else {}
     lines = [
         f"教学审核 #{review.get('id')}",
         f"- 来源：{source.get('chat_type')} {source.get('target_id') or 'unknown'}",
         f"- 触发：{source.get('trigger')}",
+        f"- 场景：{metadata.get('scene_label') or retrieval.get('scene_label') or 'unknown'}",
+        (
+            "- 36.skill："
+            f"关系画像={'是' if style_skill.get('relationship_profile_found') else '否'}；"
+            f"纠正命中={style_skill.get('correction_hit_count', 0)}"
+        ),
         "对方：",
         str(review.get("message") or "")[:500],
         "候选：",
@@ -398,14 +442,16 @@ def format_teaching_review_window(review: Dict[str, Any]) -> str:
 
 
 def format_teaching_status(enabled: bool, stats: Dict[str, Any]) -> str:
+    corrections = stats.get("corrections") if isinstance(stats.get("corrections"), dict) else {}
     return "\n".join([
         "教学模式：",
         f"- 影子审核：{'开' if enabled else '关'}",
         f"- 待审核：{stats.get('pending_count', 0)} 条",
         f"- 已记录反馈：{stats.get('feedback_count', 0)} 条",
+        f"- 主动纠正：{corrections.get('active_count', 0)} 条 active",
         f"- 操作分布：{stats.get('action_counts') or {}}",
         f"- 评分分布：{stats.get('rating_counts') or {}}",
-        "用法：/教学 开；/教学 关；/教学 最近；/采纳 <id> <1-3>；/改成 <id> <正确回复>",
+        "用法：/教学 开；/教学 关；/教学 最近；/教学 纠正 最近；/采纳 <id> <1-8>；/改成 <id> <正确回复>",
     ])
 
 
@@ -415,10 +461,14 @@ def format_recent_reviews(reviews: List[Dict[str, Any]]) -> str:
     lines = ["最近教学样本："]
     for review in reviews:
         source = review.get("source") or {}
+        metadata = review.get("metadata") if isinstance(review.get("metadata"), dict) else {}
+        style_skill = metadata.get("style_skill") if isinstance(metadata.get("style_skill"), dict) else {}
         lines.append(
             f"- {review.get('id')} {review.get('status')} "
             f"{source.get('chat_type')}:{source.get('target_id') or 'unknown'} "
-            f"候选={len(review.get('candidates') or [])}"
+            f"候选={len(review.get('candidates') or [])} "
+            f"skill={'Y' if style_skill.get('relationship_profile_found') else 'N'} "
+            f"纠正={style_skill.get('correction_hit_count', 0)}"
         )
     return "\n".join(lines)
 

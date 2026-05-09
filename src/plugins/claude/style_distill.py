@@ -27,6 +27,11 @@ from .style_profile import (
     clean_style_habits,
     style_store,
 )
+from .style_skill import (
+    candidate_correction_delta,
+    format_style_skill_context_for_prompt,
+    load_style_skill_context,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -89,6 +94,10 @@ FORMAL_WORK_HINTS = (
 EMOTIONAL_HINTS = (
     "烦", "难受", "崩", "气死", "离谱", "笑死", "草", "服了", "骂", "猪",
     "傻", "哭", "哈哈", "绷不住", "急了",
+)
+EXPLAIN_HINTS = (
+    "讲下", "讲讲", "解释", "逻辑", "原理", "大概是什么", "怎么理解",
+    "展开说", "细说一下", "说清楚",
 )
 NEGATIVE_PREFIXES = ("不", "没", "别", "不是", "不会", "不用", "没有", "不太", "别急")
 CONFIRM_PREFIXES = ("行", "可以", "好", "嗯", "对", "是", "ok", "OK", "收到", "没问题", "可以啊")
@@ -2654,16 +2663,29 @@ def infer_scene_label(
     current_context: str | Sequence[Dict[str, Any]] | None = None,
 ) -> str:
     context_text = _normalize_current_context(current_context, latest_message)
-    features = _features_for_text(context_text or latest_message)
-    if _contains_any(context_text, FORMAL_WORK_HINTS) or features["has_url"]:
+    latest_text = str(latest_message or "").strip()
+    latest_features = _features_for_text(latest_text)
+    context_features = _features_for_text(context_text or latest_text)
+    if _contains_any(context_text, FORMAL_WORK_HINTS) or context_features["has_url"]:
         return "formal_or_worklike"
     if chat_type == "group":
         if "@" in context_text or "[reply]" in context_text or "回复" in context_text:
             return "group_mentioned_or_reply"
         return "group_interjection"
-    if _contains_any(context_text, EMOTIONAL_HINTS) or features["has_exclamation"] or features["emoji_count"] > 0:
+    if (
+        _contains_any(latest_text, EMOTIONAL_HINTS)
+        or latest_features["has_exclamation"]
+        or latest_features["emoji_count"] > 0
+        or (_contains_any(context_text, EMOTIONAL_HINTS) and len(latest_text) <= 80)
+    ):
         return "private_emotional"
-    if len(str(latest_message or "")) >= 80 or features["line_count"] > 1:
+    if _contains_any(latest_text, EXPLAIN_HINTS):
+        return "private_long_explain"
+    if (
+        len(latest_text) >= 80
+        or latest_features["line_count"] > 1
+        or (context_features["line_count"] >= 3 and len(context_text) >= 160)
+    ):
         return "private_long_explain"
     return "private_short_casual"
 
@@ -2764,33 +2786,47 @@ def build_retrieval_first_prompt(
     *,
     current_context: str | Sequence[Dict[str, Any]] | None = None,
     retrieval: Dict[str, Any] | None = None,
+    style_skill_context: Dict[str, Any] | None = None,
+    candidate_count: int = 8,
+    include_raw_samples: bool = False,
 ) -> str:
     retrieval = retrieval or {}
+    count = max(3, min(8, int(candidate_count or 8)))
     lines = [
-        "你在生成主人聊天草稿。只输出 3 条候选回复，JSON 数组字符串，每条只含回复正文。",
-        "要求：像真实聊天，不要像 AI 助手；不要解释；不要自称机器人；不要编造主人现实状态或承诺。",
+        f"你在生成主人聊天草稿。只输出 {count} 条候选回复，JSON 数组字符串，每条只含回复正文。",
+        "要求：像真实聊天，不要像 AI 助手；不要解释；不要自称机器人；不要编造主人现实状态或承诺；不要照抄历史原句。",
+        "相似真实样本只用于学习语气和节奏，不要把样本里的具体事实、人物、物品、场景搬到当前回复里。",
         f"当前场景：{retrieval.get('scene_label') or 'unknown'}",
     ]
+    skill_prompt = format_style_skill_context_for_prompt(style_skill_context)
+    if skill_prompt:
+        lines.append(skill_prompt)
     context_text = _normalize_current_context(current_context, latest_message)
     if context_text:
         lines.append("当前聊天上下文：")
         lines.append(context_text[:1200])
     samples = retrieval.get("results") or []
     if samples:
-        lines.append("相似真实样本：")
+        if include_raw_samples:
+            lines.append("相似真实样本（已授权原句 few-shot）：")
+        else:
+            lines.append("相似样本元数据（未授权原句 few-shot，不含历史原文）：")
         for index, item in enumerate(samples[:8], start=1):
             taxonomy = item.get("taxonomy") or {}
+            target = (item.get("target") or {})
             lines.append(
                 f"样本{index} scene={item.get('scene_label')} same_rel={item.get('same_relationship')} "
-                f"scope={taxonomy.get('scope') or 'unknown'} grounding={taxonomy.get('grounding_type') or 'unknown'}"
+                f"scope={taxonomy.get('scope') or 'unknown'} grounding={taxonomy.get('grounding_type') or 'unknown'} "
+                f"reply_len={target.get('char_length') or len(str(target.get('text') or ''))}"
             )
-            sample_context = _turns_text(item.get("context") or [])
-            target = (item.get("target") or {}).get("text") or ""
-            if sample_context:
-                lines.append("历史上下文：" + sample_context[:500])
-            if target:
-                lines.append("主人真实回复：" + str(target)[:300])
-    lines.append("生成 3 条候选，彼此要有差异，但都保持口语、自然、短。")
+            if include_raw_samples:
+                sample_context = _turns_text(item.get("context") or [])
+                target_text = target.get("text") or ""
+                if sample_context:
+                    lines.append("历史上下文：" + sample_context[:500])
+                if target_text:
+                    lines.append("主人真实回复：" + str(target_text)[:300])
+    lines.append(f"生成 {count} 条候选，彼此要有差异，但都保持口语、自然、短。")
     return "\n".join(lines)
 
 
@@ -2799,18 +2835,61 @@ def style_rerank_candidates(
     *,
     scene_label: str = "",
     max_length: int | None = None,
+    corrections: Sequence[Dict[str, Any]] | None = None,
+    historical_targets: Sequence[str] | None = None,
+    latest_message: str = "",
 ) -> List[Dict[str, Any]]:
     """Filter candidates that are too formal, too long, or assistant-like."""
-    formal_markers = ("您好", "请问", "非常抱歉", "感谢", "我可以帮你", "有什么可以帮", "作为")
-    ai_markers = ("机器人", "AI", "助手", "无法", "我不能", "根据上下文")
-    target_max = max_length or (80 if scene_label in {"private_long_explain", "formal_or_worklike"} else 32)
+    formal_markers = (
+        "您好", "请问", "非常抱歉", "感谢", "作为", "以下是", "总结一下",
+        "整理如下", "建议你", "需要注意的是", "你好！我是",
+    )
+    ai_markers = (
+        "机器人", "AI", "ai", "助手", "无法", "我不能", "根据上下文",
+        "我可以帮你", "有什么可以帮", "好问题", "让我帮你", "让我来",
+        "随时准备协助", "科研助手", "数字伙伴", "模型", "prompt",
+    )
+    target_max = max_length or (72 if scene_label in {"private_long_explain", "formal_or_worklike"} else 32)
+    correction_items = list(corrections or [])
+    latest_intent = detect_message_intent(latest_message) if latest_message else {}
+    state_claim_markers = (
+        "不忙", "有空", "在家", "在宿舍", "在学校", "刚醒", "刚起",
+        "刚坐下", "已经到了", "快到了", "做完了", "弄完了", "搞完了",
+        "在呢", "在的", "我在", "人在",
+    )
+    over_commit_markers = (
+        "马上", "这就", "立刻", "一定", "肯定", "包的", "包能",
+        "今天能", "今晚能", "可以弄完", "能弄完", "没问题我来",
+        "快了", "差不多了", "快弄完", "快做完", "马上好",
+    )
+    credential_request = _contains_any(latest_message, ("账号", "密码", "验证码", "登一下", "登录", "借号"))
+    risky_share_markers = (
+        "发你", "给你", "发给你", "给你登", "行，发", "可以，发",
+        "喏", "直接给", "你登吧",
+    )
+    generic_probe_replies = {"何意", "何意味", "咋了", "咋滴", "嗯？", "啥"}
+    history_texts = [
+        re.sub(r"\s+", " ", str(item or "")).strip()
+        for item in (historical_targets or [])
+        if str(item or "").strip()
+    ][:12]
     ranked = []
     for raw in candidates:
         text = re.sub(r"\s+", " ", str(raw or "")).strip().strip("\"'“”")
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                nested = json.loads(text)
+                if isinstance(nested, list) and nested:
+                    text = re.sub(r"\s+", " ", str(nested[0] or "")).strip().strip("\"'“”")
+            except Exception:
+                pass
         if not text:
             continue
         score = 100
         reasons = []
+        if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
+            score -= 90
+            reasons.append("invalid_text")
         if len(text) > target_max:
             score -= min(60, len(text) - target_max)
             reasons.append("too_long")
@@ -2820,15 +2899,64 @@ def style_rerank_candidates(
         if any(marker in text for marker in ai_markers):
             score -= 45
             reasons.append("assistant_like")
+        if re.search(r"(^|\n)\s*(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+)", text):
+            score -= 25
+            reasons.append("structured_answer")
         if text.endswith(("。", "！")) and len(text) <= 12:
             score -= 6
             reasons.append("over_punctuated_short")
+        if latest_intent.get("reality_state_query") and any(marker in text for marker in state_claim_markers):
+            score -= 42
+            reasons.append("unsafe_owner_state")
+        if (
+            latest_intent.get("task_request")
+            or latest_intent.get("reality_state_query")
+            or _contains_any(latest_message, TASK_HINTS)
+            or _contains_any(latest_message, ("弄完", "做完", "今天能", "今晚能"))
+        ) and any(marker in text for marker in over_commit_markers):
+            score -= 34
+            reasons.append("over_commit")
+        if credential_request and any(marker in text for marker in risky_share_markers):
+            score -= 90
+            reasons.append("credential_share_risk")
+        if (
+            latest_intent.get("help_request")
+            or latest_intent.get("task_request")
+            or _contains_any(latest_message, HELP_HINTS + TASK_HINTS)
+        ) and text in generic_probe_replies:
+            score -= 16
+            reasons.append("too_generic_for_request")
+        if latest_intent.get("emotional") and text in {"何意", "何意味"}:
+            score -= 12
+            reasons.append("too_generic_for_emotion")
+        if len(text) >= 3 and text in history_texts:
+            score -= 24
+            reasons.append("copied_history_exact")
+        elif len(text) >= 6 and history_texts:
+            similarity = max(
+                (_jaccard(_text_ngrams(text), _text_ngrams(target)) for target in history_texts),
+                default=0.0,
+            )
+            if similarity >= 0.82:
+                score -= 14
+                reasons.append("copied_history_near")
+        correction_delta, correction_reasons = candidate_correction_delta(text, correction_items)
+        if correction_delta:
+            score += correction_delta
+            reasons.extend(correction_reasons)
         if 2 <= len(text) <= target_max:
             score += 8
             reasons.append("length_ok")
         hard_reject = (
             "assistant_like" in reasons
             or "too_long" in reasons
+            or "structured_answer" in reasons
+            or "invalid_text" in reasons
+            or "unsafe_owner_state" in reasons
+            or "over_commit" in reasons
+            or "credential_share_risk" in reasons
+            or "copied_history_exact" in reasons
+            or "copied_history_near" in reasons
             or ("too_formal" in reasons and scene_label != "formal_or_worklike")
         )
         ranked.append({"text": text, "score": score, "reasons": reasons, "accepted": score >= 55 and not hard_reject})
@@ -2843,6 +2971,7 @@ async def generate_retrieval_first_reply_candidates(
     run_dir: str | Path | None = None,
     chat_type: str = "private",
     target_id: str | int | None = None,
+    include_raw_samples: bool = False,
 ) -> Dict[str, Any]:
     """Offline retrieval-first draft prototype. It does not send QQ messages."""
     retrieval = retrieve_dialogue_pair_samples(
@@ -2855,23 +2984,57 @@ async def generate_retrieval_first_reply_candidates(
     )
     if not retrieval.get("ok"):
         return retrieval
+    style_skill_context = load_style_skill_context(
+        chat_type=chat_type,
+        target_id=target_id,
+        scene_label=str(retrieval.get("scene_label") or ""),
+        latest_message=latest_message,
+    )
     prompt = build_retrieval_first_prompt(
         latest_message,
         current_context=current_context,
         retrieval=retrieval,
+        style_skill_context=style_skill_context,
+        candidate_count=8,
+        include_raw_samples=include_raw_samples,
     )
     from .api import llm_client
     raw = await llm_client.chat(
         messages=[{"role": "user", "content": prompt}],
-        system_prompt="你只输出 JSON 数组字符串，数组里 3 个中文聊天候选回复。",
+        system_prompt="你只输出 JSON 数组字符串，数组里 8 个中文聊天候选回复。",
         temperature=0.8,
     )
     try:
         parsed = json.loads(raw)
-        candidates = [str(item) for item in parsed if isinstance(item, str)]
+        if isinstance(parsed, dict):
+            parsed = parsed.get("candidates") or parsed.get("replies") or []
+        candidates = []
+        for item in parsed:
+            if isinstance(item, str):
+                text = item.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    try:
+                        nested = json.loads(text)
+                        if isinstance(nested, list):
+                            candidates.extend(str(nested_item) for nested_item in nested if isinstance(nested_item, str))
+                            continue
+                    except Exception:
+                        pass
+                candidates.append(text)
     except Exception:
         candidates = [line.strip("- 0123456789.、") for line in raw.splitlines() if line.strip()]
-    reranked = style_rerank_candidates(candidates, scene_label=str(retrieval.get("scene_label") or ""))
+    historical_targets = [
+        str((item.get("target") or {}).get("text") or "")
+        for item in (retrieval.get("results") or [])
+        if isinstance(item, dict)
+    ]
+    reranked = style_rerank_candidates(
+        candidates[:12],
+        scene_label=str(retrieval.get("scene_label") or ""),
+        corrections=style_skill_context.get("corrections") or [],
+        historical_targets=historical_targets,
+        latest_message=latest_message,
+    )
     return {
         "ok": True,
         "run_id": retrieval.get("run_id"),
@@ -2879,6 +3042,13 @@ async def generate_retrieval_first_reply_candidates(
         "retrieval": {
             "result_count": retrieval.get("result_count"),
             "target_mapping": retrieval.get("target_mapping"),
+            "raw_samples_in_prompt": bool(include_raw_samples),
+        },
+        "style_skill": {
+            "enabled": bool(style_skill_context.get("enabled")),
+            "relationship_profile_found": bool(style_skill_context.get("relationship_profile_found")),
+            "correction_hit_count": int(style_skill_context.get("correction_hit_count") or 0),
+            "target_id": str(target_id or "")[:24],
         },
         "candidates": reranked,
         "prompt_preview": prompt[:2000],

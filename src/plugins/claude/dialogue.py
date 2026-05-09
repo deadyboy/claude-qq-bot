@@ -82,6 +82,11 @@ from .style_teaching import (
     format_teaching_status,
     teaching_store,
 )
+from .style_skill import (
+    deactivate_correction,
+    format_correction_status,
+    format_recent_corrections,
+)
 
 # 智能体引擎 (可选启用)
 AGENT_MODE = False  # 设置为 True 启用智能体模式
@@ -810,7 +815,7 @@ async def generate_teaching_candidates(
     actor_id: str | int,
     recent_dialogue: list[dict] | None = None,
 ) -> tuple[list[str], dict]:
-    """Generate up to three owner-style candidates for review, without sending them to the contact."""
+    """Generate up to eight owner-style candidates for review, without sending them to the contact."""
     metadata: dict[str, Any] = {"generator": "retrieval_first"}
     candidates: list[str] = []
     try:
@@ -819,6 +824,7 @@ async def generate_teaching_candidates(
             current_context=recent_dialogue,
             chat_type=chat_type,
             target_id=target_id,
+            include_raw_samples=is_style_raw_fewshot_enabled(),
         )
         metadata["retrieval"] = {
             "ok": retrieval_result.get("ok"),
@@ -826,13 +832,15 @@ async def generate_teaching_candidates(
             "scene_label": retrieval_result.get("scene_label"),
             "result_count": (retrieval_result.get("retrieval") or {}).get("result_count"),
         }
+        metadata["style_skill"] = retrieval_result.get("style_skill") or {}
+        metadata["scene_label"] = retrieval_result.get("scene_label")
         for item in retrieval_result.get("candidates") or []:
             if not item.get("accepted"):
                 continue
             candidate = str(item.get("text") or "").strip()
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
-            if len(candidates) >= 3:
+            if len(candidates) >= 8:
                 break
     except Exception as e:
         metadata["retrieval_error"] = type(e).__name__
@@ -858,7 +866,7 @@ async def generate_teaching_candidates(
             metadata["fallback_error"] = type(e).__name__
             write_runtime_error("generate_teaching_candidates_fallback", e)
 
-    return candidates[:3], metadata
+    return candidates[:8], metadata
 
 
 def write_runtime_error(scope: str, error: Exception):
@@ -1796,7 +1804,8 @@ async def handle_teaching_command(
     actor_id = event.user_id
 
     if action == "control":
-        switch = payload.strip().lower()
+        raw_switch = payload.strip()
+        switch = raw_switch.lower()
         if not switch or switch in {"状态", "status", "查看"}:
             await send_qq_text(
                 bot,
@@ -1806,6 +1815,21 @@ async def handle_teaching_command(
             return
         if switch in {"最近", "recent", "列表", "list"}:
             await send_qq_text(bot, event, format_recent_reviews(teaching_store.list_recent(actor_id)))
+            return
+        if switch in {"纠正", "correction", "corrections"}:
+            await send_qq_text(bot, event, format_correction_status())
+            return
+        if switch in {"纠正 最近", "纠正 recent", "correction recent", "corrections recent"}:
+            await send_qq_text(bot, event, format_recent_corrections())
+            return
+        if switch.startswith("纠正 停用") or switch.startswith("correction disable") or switch.startswith("corrections disable"):
+            parts = raw_switch.split(maxsplit=2)
+            correction_id = parts[2].strip() if len(parts) >= 3 else ""
+            if not correction_id:
+                await send_qq_text(bot, event, "用法：/教学 纠正 停用 <id>")
+                return
+            ok, msg = deactivate_correction(correction_id, actor_id=actor_id)
+            await send_qq_text(bot, event, msg if ok else f"停用失败：{msg}")
             return
         if switch.startswith("出题") or switch.startswith("batch"):
             payload_text = switch.removeprefix("出题").removeprefix("batch").strip()
@@ -1870,12 +1894,12 @@ async def handle_teaching_command(
             )
             await send_qq_text(bot, event, "教学影子审核已关闭。")
             return
-        await send_qq_text(bot, event, "用法：/教学 状态；/教学 开；/教学 关；/教学 最近；/采纳 <id> <1-3>；/改成 <id> <正确回复>")
+        await send_qq_text(bot, event, "用法：/教学 状态；/教学 开；/教学 关；/教学 最近；/教学 纠正 最近；/采纳 <id> <1-8>；/改成 <id> <正确回复>")
         return
 
     review_id, rest = _resolve_review_for_feedback(payload, actor_id)
     if not review_id:
-        await send_qq_text(bot, event, "没有可用的教学样本。请先开启 /教学 开，或使用完整格式：/采纳 <id> <1-3>。")
+        await send_qq_text(bot, event, "没有可用的教学样本。请先开启 /教学 开，或使用完整格式：/采纳 <id> <1-8>。")
         return
 
     if action == "accept":
@@ -1883,7 +1907,7 @@ async def handle_teaching_command(
         try:
             selected = int(first)
         except (TypeError, ValueError):
-            await send_qq_text(bot, event, "用法：/采纳 <id> <1-3> [原因]；也可对最近样本用 /采纳 1")
+            await send_qq_text(bot, event, "用法：/采纳 <id> <1-8> [原因]；也可对最近样本用 /采纳 1")
             return
         ok, msg, _ = teaching_store.record_feedback(
             review_id,
@@ -1940,7 +1964,7 @@ async def handle_teaching_command(
         await send_qq_text(bot, event, msg if ok else f"记录失败：{msg}")
         return
 
-    await send_qq_text(bot, event, "用法：/教学 状态；/采纳 <id> <1-3>；/评分 <id> <1-5>；/改成 <id> <正确回复>；/拒绝 <id> <原因>")
+    await send_qq_text(bot, event, "用法：/教学 状态；/采纳 <id> <1-8>；/评分 <id> <1-5>；/改成 <id> <正确回复>；/拒绝 <id> <原因>")
 
 
 style_draft_cmd = on_message(rule=is_style_draft_command, priority=4, block=True)
