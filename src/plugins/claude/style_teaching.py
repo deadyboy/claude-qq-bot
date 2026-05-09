@@ -319,7 +319,11 @@ class TeachingReviewStore:
         scene_label: str = "",
     ) -> List[Dict[str, Any]]:
         """Create fast batch review items from text-grounded SFT candidates."""
-        from .style_distill import find_latest_distill_run
+        from .style_distill import (
+            find_latest_distill_run,
+            is_ai_assistant_generated_text,
+            is_style_training_text_allowed,
+        )
 
         run_path = find_latest_distill_run(run_dir)
         if run_path is None:
@@ -340,6 +344,8 @@ class TeachingReviewStore:
             message = _last_other_text(item.get("context") or [])
             target = _clean_text(item.get("target"), 300)
             if not message or not target:
+                continue
+            if is_ai_assistant_generated_text(message) or not is_style_training_text_allowed(target):
                 continue
             review = self.create_review(
                 message=message,

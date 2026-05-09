@@ -529,6 +529,66 @@ async def test_style_distill():
             json.dumps(sample_export, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        ai_export = {
+            "chatInfo": {
+                "name": "ai_bot_test",
+                "type": "private",
+                "selfUin": "1000000001",
+                "selfName": "owner",
+            },
+            "messages": [
+                {
+                    "id": "ai1",
+                    "seq": "1",
+                    "timestamp": 1700000300,
+                    "sender": {"uin": "4011238485", "name": "ai_bot"},
+                    "type": "type_1",
+                    "content": {
+                        "text": "你好！我是 36，你的 AI 科研助手 🤖 有什么我可以帮你的吗？",
+                        "elements": [{"type": "text"}],
+                    },
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "ai2",
+                    "seq": "2",
+                    "timestamp": 1700000330,
+                    "sender": {"uin": "1000000001", "name": "owner"},
+                    "type": "type_1",
+                    "content": {"text": "你叫什么", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "ai3",
+                    "seq": "3",
+                    "timestamp": 1700000360,
+                    "sender": {"uin": "4011238485", "name": "ai_bot"},
+                    "type": "type_1",
+                    "content": {
+                        "text": "## 方案 1\n让我帮你整理一下 OpenClaw 的基础命令。\n```text\n/new\n```",
+                        "elements": [{"type": "text"}],
+                    },
+                    "recalled": False,
+                    "system": False,
+                },
+                {
+                    "id": "ai4",
+                    "seq": "4",
+                    "timestamp": 1700000390,
+                    "sender": {"uin": "1000000001", "name": "owner"},
+                    "type": "type_1",
+                    "content": {"text": "创建新的子代理对话是什么意思？", "elements": [{"type": "text"}]},
+                    "recalled": False,
+                    "system": False,
+                },
+            ],
+        }
+        (input_dir / "friend_recent_002_private_4011238485_ai_bot.json").write_text(
+            json.dumps(ai_export, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         result = run_qce_style_distillation(
             input_dir=input_dir,
@@ -539,6 +599,7 @@ async def test_style_distill():
             store=store,
         )
         assert result["ok"], result
+        assert result["excluded_sources"] >= 1
         assert result["owner_text_messages"] == 3
         assert result["turn_count"] >= 6
         assert result["dialogue_pair_count"] >= 3
@@ -563,6 +624,9 @@ async def test_style_distill():
         assert "样例回复A" in pairs_text
         assert "样例回复A" in rag_pool_text
         assert "样例回复A" in sft_text
+        assert "AI 科研助手" not in turns_text
+        assert "OpenClaw" not in pairs_text
+        assert "创建新的子代理" not in sft_text
         assert "hard_filters" in rerank_rules_text
         assert "high_freq_short_replies" in phrase_text
         assert "dialogue_pair_count" in eval_text
@@ -753,6 +817,18 @@ async def test_style_teaching():
         run_dir.mkdir(parents=True, exist_ok=True)
         with (run_dir / "sft_candidates.jsonl").open("w", encoding="utf-8") as f:
             f.write(json.dumps({
+                "sample_id": "sample_ai",
+                "source_file_id": "source_ai",
+                "relationship_id": "4011238485",
+                "chat_type": "private",
+                "scene_label": "formal_or_worklike",
+                "scope": "global_style",
+                "learning_value": "high",
+                "grounding_type": "text_grounded",
+                "context": [{"role": "other", "text": "你好！我是 36，你的 AI 科研助手 🤖 有什么我可以帮你的吗？"}],
+                "target": "你叫什么",
+            }, ensure_ascii=False) + "\n")
+            f.write(json.dumps({
                 "sample_id": "sample_a",
                 "source_file_id": "source_0001",
                 "relationship_id": "2000000002",
@@ -762,12 +838,12 @@ async def test_style_teaching():
                 "learning_value": "high",
                 "grounding_type": "text_grounded",
                 "context": [{"role": "other", "text": "在不在"}],
-                "target": "在",
+                "target": "在的",
             }, ensure_ascii=False) + "\n")
         batch = store.create_replay_batch(count=1, reviewer_ids=["1000000001"], run_dir=run_dir)
         assert len(batch) == 1
         assert batch[0]["message"] == "在不在"
-        assert batch[0]["candidates"] == ["在"]
+        assert batch[0]["candidates"] == ["在的"]
         assert "已创建 1 条教学题" in format_teaching_batch(batch)
         print("      通过")
         return True

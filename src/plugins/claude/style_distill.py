@@ -33,6 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SELF_UIN = os.getenv("QQBOT_STYLE_SELF_UIN", "").strip()
 DEFAULT_EXPORT_ROOT = Path(os.getenv("QQBOT_STYLE_EXPORT_ROOT") or (PROJECT_ROOT.parent / "qq-chat-exports"))
 DEFAULT_QCE_INPUT_DIR_ENV = os.getenv("QQBOT_STYLE_QCE_INPUT_DIR", "").strip()
+DEFAULT_EXCLUDED_RELATIONSHIP_IDS = {"2920249374", "4011238485", "4018851780", "4019116505"}
 MAX_INDEX_SAMPLES = 5000
 MAX_REPLY_LENGTH = 280
 MAX_CONTEXT_MESSAGES = 8
@@ -112,6 +113,17 @@ EMOJI_RE = re.compile(
     "\U00002600-\U000026FF"
     "]",
     flags=re.UNICODE,
+)
+MARKDOWN_STRUCTURE_RE = re.compile(r"(^|\n)\s{0,3}(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+|>\s+)", flags=re.M)
+MARKDOWN_TABLE_RE = re.compile(r"\|[^|\n]+(?:\|[^|\n]+)+\|")
+AI_IDENTITY_RE = re.compile(r"(我是|我叫).{0,20}(?:AI|ai|机器人|助手|科研伙伴|数字伙伴)")
+AI_ASSISTANT_MARKERS = (
+    "有什么我可以帮", "我可以帮你", "随时准备协助", "刚上线", "好问题",
+    "让我帮你", "让我来", "让我先", "让我仔细", "我发现了问题",
+    "以下是", "整理如下", "方案 1", "方案1", "步骤", "总结一下",
+    "已成功创建", "验证文件", "读取 transcript", "视觉描述", "OCR 文字",
+    "OpenClaw", "Claude Code", "subagent", "skill", "web_fetch", "prompt",
+    "API 调用", "模型", "代码块", "```",
 )
 
 
@@ -277,6 +289,119 @@ def _bucket_length(length: int) -> str:
 
 def _contains_any(text: str, hints: Sequence[str]) -> bool:
     return any(hint in text for hint in hints)
+
+
+def _configured_excluded_relationship_ids() -> set[str]:
+    raw = os.getenv("QQBOT_STYLE_EXCLUDED_RELATIONSHIP_IDS", "")
+    configured = {
+        item.strip()
+        for item in re.split(r"[,，;\s]+", raw)
+        if item.strip()
+    }
+    return set(DEFAULT_EXCLUDED_RELATIONSHIP_IDS) | configured
+
+
+def is_ai_assistant_generated_text(text: str) -> bool:
+    """Heuristic guard for AI/bot assistant output mixed into QQ exports."""
+    raw = str(text or "").strip()
+    compact = re.sub(r"\s+", "", raw)
+    if len(compact) < 12:
+        return False
+
+    lowered = raw.lower()
+    score = 0
+    if len(compact) >= 120:
+        score += 1
+    if len(compact) >= 300:
+        score += 1
+    if AI_IDENTITY_RE.search(raw):
+        score += 4
+    if MARKDOWN_STRUCTURE_RE.search(raw):
+        score += 2
+    if MARKDOWN_TABLE_RE.search(raw):
+        score += 2
+    if "```" in raw:
+        score += 3
+
+    marker_hits = 0
+    for marker in AI_ASSISTANT_MARKERS:
+        marker_text = marker.lower()
+        if marker_text in lowered or marker in compact:
+            marker_hits += 1
+    score += min(5, marker_hits)
+
+    if "让我" in compact[:80] and _contains_any(compact, ("帮你", "整理", "验证", "读取", "查看", "搜索", "创建", "修复")):
+        score += 2
+    if _contains_any(compact, ("第1步", "第一步", "方案一", "方案1", "##", "---")):
+        score += 2
+    return score >= 4
+
+
+def is_style_training_text_allowed(text: str) -> bool:
+    """Return whether owner text is suitable as personal style material."""
+    if not _is_useful_text(text):
+        return False
+    if contains_sensitive_content(str(text or "")):
+        return False
+    if is_ai_assistant_generated_text(str(text or "")):
+        return False
+    return True
+
+
+def _style_source_filter(
+    messages: Sequence[Dict[str, Any]],
+    *,
+    chat_type: str,
+    self_uin: str,
+    relationship_id: str,
+) -> Dict[str, Any]:
+    """Classify whole sources that should not enter daily owner-style training."""
+    result: Dict[str, Any] = {
+        "excluded": False,
+        "reason": "",
+        "ai_like_other_messages": 0,
+        "other_text_messages": 0,
+        "self_text_messages": 0,
+    }
+    relationship = str(relationship_id or "").strip()
+    if relationship and relationship in _configured_excluded_relationship_ids():
+        result["excluded"] = True
+        result["reason"] = "configured_ai_or_test_bot_relationship"
+        return result
+    if relationship and self_uin and relationship == str(self_uin):
+        result["excluded"] = True
+        result["reason"] = "self_chat_not_daily_style"
+        return result
+
+    if chat_type != "private":
+        return result
+
+    other_texts = []
+    self_texts = []
+    for message in messages:
+        if not isinstance(message, dict) or _is_system_or_recalled(message):
+            continue
+        text = _message_text(message)
+        if not _is_useful_text(text):
+            continue
+        if _sender_uin(message) == self_uin:
+            self_texts.append(text)
+        else:
+            other_texts.append(text)
+
+    ai_like_other = sum(1 for item in other_texts if is_ai_assistant_generated_text(item))
+    result.update({
+        "ai_like_other_messages": ai_like_other,
+        "other_text_messages": len(other_texts),
+        "self_text_messages": len(self_texts),
+    })
+    if len(other_texts) >= 3:
+        ai_ratio = ai_like_other / max(1, len(other_texts))
+        long_other = sum(1 for item in other_texts if len(re.sub(r"\s+", "", item)) >= 180)
+        if ai_like_other >= 2 and (ai_ratio >= 0.18 or long_other >= 2):
+            result["excluded"] = True
+            result["reason"] = "ai_assistant_chat_source"
+    return result
 
 
 def detect_message_intent(text: str) -> Dict[str, Any]:
@@ -593,6 +718,8 @@ def _build_turns(
             continue
         sender_id = _sender_uin(message)
         role = "self" if sender_id == self_uin else "other"
+        if role == "self" and not is_style_training_text_allowed(text):
+            continue
         timestamp = _timestamp(message)
         element_types = _element_types(message)
         same_turn = (
@@ -748,13 +875,18 @@ def _build_dialogue_pairs_for_source(
         if target_turn.get("role") != "self":
             continue
         target_text = str(target_turn.get("text") or "")
-        if not _is_useful_text(target_text) or len(target_text) > MAX_REPLY_LENGTH * 2:
+        if not is_style_training_text_allowed(target_text) or len(target_text) > MAX_REPLY_LENGTH * 2:
             continue
         if chat_type == "private":
             context_turns = _private_context_turns(turns, target_index)
         else:
             context_turns = _group_context_turns(turns, target_index)
         if not any(item.get("role") == "other" for item in context_turns):
+            continue
+        if any(
+            item.get("role") == "other" and is_ai_assistant_generated_text(str(item.get("text") or ""))
+            for item in context_turns
+        ):
             continue
         scene_label = _scene_label_for_pair(
             chat_type=chat_type,
@@ -1678,6 +1810,14 @@ def _build_learning_artifacts(
     rag_pool = []
     sft_candidates = []
     for pair in raw_pairs:
+        target_text = _pair_target_text(pair)
+        if not is_style_training_text_allowed(target_text):
+            continue
+        if any(
+            turn.get("role") == "other" and is_ai_assistant_generated_text(str(turn.get("text") or ""))
+            for turn in pair.get("context") or []
+        ):
+            continue
         taxonomy = _classify_learning_pair(
             pair,
             relationship_profiles_by_source=relationship_profiles_by_source,
@@ -1742,14 +1882,15 @@ def run_qce_style_distillation(
     output_dir.mkdir(parents=True, exist_ok=False)
 
     stats: Dict[str, Any] = {
-        "files": {"count": 0, "private": 0, "group": 0},
-        "messages": {"total": 0, "private": 0, "group": 0, "system_or_recalled": 0},
+        "files": {"count": 0, "private": 0, "group": 0, "excluded": 0, "excluded_reasons": Counter()},
+        "messages": {"total": 0, "private": 0, "group": 0, "system_or_recalled": 0, "excluded": 0},
         "owner": {
             "total_messages": 0,
             "text_messages": 0,
             "private": 0,
             "group": 0,
             "sensitive_skipped": 0,
+            "ai_like_skipped": 0,
             "lengths": [],
             "length_buckets": Counter(),
             "element_types": Counter(),
@@ -1809,16 +1950,34 @@ def run_qce_style_distillation(
             "relative_path": source_relpath,
             "chat_type": chat_type,
         }) or source_file_id
-        source_stats[source_file_id] = _new_source_stats(source_file_id, chat_type, len(messages))
-        source_catalog.append({
+        source_filter = _style_source_filter(
+            messages,
+            chat_type=chat_type,
+            self_uin=effective_self_uin,
+            relationship_id=relationship_id,
+        )
+        catalog_item = {
             "source_file_id": source_file_id,
             "relationship_id": relationship_id,
             "relative_path": source_relpath,
             "file_size_bytes": source_path.stat().st_size,
             "chat_type": chat_type,
             "message_count": len(messages),
+            "excluded_from_style_training": bool(source_filter.get("excluded")),
+            "excluded_reason": source_filter.get("reason") or "",
+            "quality_metrics": {
+                key: source_filter.get(key)
+                for key in ("ai_like_other_messages", "other_text_messages", "self_text_messages")
+            },
             "note": "Private local catalog for reproducing sample indexes; no chat text is stored here.",
-        })
+        }
+        source_catalog.append(catalog_item)
+        if source_filter.get("excluded"):
+            stats["files"]["excluded"] += 1
+            stats["files"]["excluded_reasons"][str(source_filter.get("reason") or "unknown")] += 1
+            stats["messages"]["excluded"] += len(messages)
+            continue
+        source_stats[source_file_id] = _new_source_stats(source_file_id, chat_type, len(messages))
 
         for index, message in enumerate(messages):
             if not isinstance(message, dict):
@@ -1847,6 +2006,9 @@ def run_qce_style_distillation(
                 continue
             if contains_sensitive_content(text):
                 stats["owner"]["sensitive_skipped"] += 1
+                continue
+            if is_ai_assistant_generated_text(text):
+                stats["owner"]["ai_like_skipped"] += 1
                 continue
 
             text_features = _features_for_text(text)
@@ -2131,6 +2293,8 @@ def run_qce_style_distillation(
         "owner_text_messages": stats["owner"]["text_messages"],
         "total_messages": stats["messages"]["total"],
         "input_files": stats["files"]["count"],
+        "excluded_sources": stats["files"]["excluded"],
+        "excluded_reasons": dict(stats["files"]["excluded_reasons"].most_common()),
         "applied": applied,
     }
 
@@ -2213,6 +2377,7 @@ def format_qce_distillation_result(result: Dict[str, Any]) -> str:
         "Stage 5B 离线蒸馏完成：",
         f"- run_id：{result.get('run_id')}",
         f"- 输入文件：{result.get('input_files')} 个",
+        f"- 已排除 AI/测试对话源：{result.get('excluded_sources', 0)} 个",
         f"- 总消息：{result.get('total_messages')} 条",
         f"- 本人文本：{result.get('owner_text_messages')} 条",
         f"- Turn：{result.get('turn_count')} 个",
