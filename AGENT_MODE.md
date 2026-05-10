@@ -61,7 +61,7 @@ pip install -e .
 
 ```python
 # 第 15 行
-AGENT_MODE = True  # 设置为 True 启用智能体模式
+# 旧 AGENT_MODE 已标记为 legacy，不建议改开关启用；后续应以受控 Agent Mode 重构替代。
 ```
 
 ### 步骤 3：启动机器人

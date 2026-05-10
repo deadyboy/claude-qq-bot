@@ -219,10 +219,8 @@ QQ 机器人 - 记忆系统快速测试
 ### 当前状态
 - 默认：`AGENT_MODE = False`（简单模式）
 
-### 启用步骤
-1. 编辑 `src/plugins/claude/dialogue.py`
-2. 修改第 15 行：`AGENT_MODE = True`
-3. 重启机器人：`nb run`
+### 启用状态
+旧 `AGENT_MODE` 已标记为 legacy，不建议再通过改开关启用；后续应以受控 Agent Mode 重构替代。
 
 ### 验证
 - 发送 `/status` 查看智能体状态

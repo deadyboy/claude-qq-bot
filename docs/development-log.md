@@ -128,7 +128,7 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
   - `/白名单 添加群 <群号> [备注]`
   - `/白名单 删除群 <群号>`
 - `/权限` now shows whether the current user is in the trusted-user list.
-- The trust list is a base for future auto-reply and high-risk tools; it intentionally does not change ordinary chat behavior yet.
+- The trust list scopes teaching review and high-risk tools. Old owner-style auto-send has been retired; ordinary private chats do not use the trust list to auto-send owner-style replies.
 
 ### Stage 6B: Confirmation and Audit Base
 
@@ -173,7 +173,7 @@ There is intentionally no `bot_<botQQ>` namespace yet. Current priority is testi
 
 ### Stage 6: Permission and Contact Whitelist
 
-- Connect the trust list and permission levels to future style draft, auto-reply, and automation modes.
+- Connect the trust list and permission levels to future style draft, teaching review, and automation modes.
 - Add richer confirmation metadata for future file/network/shell tools.
 
 ### Stage 7: Agent Mode Refactor

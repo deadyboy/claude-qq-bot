@@ -12,7 +12,7 @@
 
 ## Runtime
 
-- Last inspected: 2026-05-09 05:xx Asia/Shanghai.
+- Last inspected: 2026-05-10 17:xx Asia/Shanghai.
 - Current NapCat WebUI: `http://127.0.0.1:16099/webui/`.
 - QCE exporter endpoint observed on local port `40653`.
 - Bot reverse WebSocket listener: `127.0.0.1:8081`
@@ -20,9 +20,9 @@
 - Prefer restarting only the bot listener, not NapCat, to preserve the QQ login session.
 - Full command guide: `docs/command-guide.md`.
 - Current observed runtime: Python bot process is listening on `127.0.0.1:8081` and connected to the local QQ/NapCat process.
-- Current runtime toggles in `data/runtime_state.json`: auto memory on, style raw few-shot on, style auto-reply on.
+- Current runtime toggles in `data/runtime_state.json`: auto memory on, style raw few-shot off, teaching review off. The old style auto-reply toggle has been removed.
 - Current trust-list snapshot: 2 trusted private users, 0 trusted groups.
-- Current owner style profile snapshot: latest Stage 5B profile has 28,299 owner text samples, 857 candidate/indexed reply pairs, average length about 14.3 chars, median 6 chars, p90 22 chars, and 5 offline distillation runs recorded.
+- Current owner style profile snapshot: Stage 5B/36.skill runtime is active for draft generation and teaching review. Auto-sending owner-style replies is retired.
 
 ## Completed Work
 
@@ -124,7 +124,7 @@
   - `/白名单 添加群 <群号> [备注]`
   - `/白名单 删除群 <群号>`
 - `/权限` reports whether the current user is in the trusted-user list.
-- Trust-list data is a future permission base and does not change ordinary chat behavior yet.
+- Trust-list data scopes teaching review and trusted-group generic chat. It does not enable automatic owner-style sending.
 
 ### Stage 6B: Confirmation and Audit Base
 
@@ -184,12 +184,10 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
   - `/风格 原句 关`
 - Raw few-shot mode is default-off, owner-only, private-only, confirmation-gated when enabling, and audited in `data/action_logs.jsonl`. Audit entries record ids/hashes/counts, not raw text.
 - When enabled, the generation loop can send a small number of redacted real QCE historical context/reply pairs as transient few-shot prompt examples. These snippets are not persisted into profiles or distillation outputs.
-- Added controlled owner-style auto-reply:
-  - `/代聊 状态`
-  - `/代聊 开`
-  - `/代聊 关`
-  - `/风格 自动回复 开/关`
-- Auto-reply is default-off and confirmation-gated when enabling. It only acts for trusted private users or trusted groups, requires a Stage 5B source mapping for that target, and group chats still require @/reply targeting.
+- Retired the old owner-style auto-send path:
+  - `/代聊`
+  - `/风格 自动回复`
+- These commands now return a retirement notice only. They do not create confirmation actions and cannot auto-send replies. Real-contact observation should use `/教学 开`, which sends candidates to the owner only.
 
 Still planned:
 
@@ -198,11 +196,11 @@ Still planned:
 - Add embedding/semantic retrieval after the hybrid rule-based retrieval baseline is stable.
 - Improve phrase extraction to avoid generic words.
 - Improve live contact/group mapping accuracy if QCE exporter filename formats change.
-- Add a risk classifier for auto-reply vs draft-only vs silence.
+- Add a risk classifier for draft-only vs teaching-review vs silence.
 
 ### Stage 6: Permission and Contact Whitelist
 
-- Connect trust lists and permission levels to future style draft, auto-reply, and automation modes.
+- Connect trust lists and permission levels to future style draft, teaching review, and automation modes.
 - Add richer confirmation metadata for future file/network/shell tools.
 
 ### Stage 7: Agent Mode Refactor
