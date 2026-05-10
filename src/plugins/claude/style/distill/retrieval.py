@@ -707,6 +707,8 @@ def format_style_debug_report(
             f"，model={embedding_status.get('model') or 'unknown'}"
             f"，hits={embedding_status.get('result_count', 0)}"
         )
+        if not embedding_status.get("ok") and embedding_status.get("message"):
+            lines.append(f"- 向量错误：{embedding_status.get('message')}")
 
     samples = context.get("similar_samples") or []
     if samples:

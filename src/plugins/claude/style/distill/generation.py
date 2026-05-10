@@ -94,6 +94,10 @@ def style_rerank_candidates(
         "喏", "直接给", "你登吧",
     )
     generic_probe_replies = {"何意", "何意味", "咋了", "咋滴", "嗯？", "啥"}
+    game_invitation_markers = (
+        "有的呀", "有的啊", "当然", "可以呀", "可以啊", "想一起", "一起开黑",
+        "来开黑", "开黑吗", "一起玩吗", "玩吗？", "玩吗?",
+    )
     history_texts = [
         re.sub(r"\s+", " ", str(item or "")).strip()
         for item in (historical_targets or [])
@@ -155,6 +159,16 @@ def style_rerank_candidates(
         if latest_intent.get("emotional") and text in {"何意", "何意味"}:
             score -= 12
             reasons.append("too_generic_for_emotion")
+        if latest_intent.get("game_invitation"):
+            if any(marker in text for marker in game_invitation_markers):
+                score -= 44
+                reasons.append("assistant_like_game_invite")
+            if text.endswith(("！", "!")):
+                score -= 12
+                reasons.append("over_excited_game_invite")
+            if len(text) > 14:
+                score -= 18
+                reasons.append("too_long_for_game_invite")
         if len(text) >= 3 and text in history_texts:
             score -= 24
             reasons.append("copied_history_exact")
@@ -183,6 +197,7 @@ def style_rerank_candidates(
             or "credential_share_risk" in reasons
             or "copied_history_exact" in reasons
             or "copied_history_near" in reasons
+            or "assistant_like_game_invite" in reasons
             or ("too_formal" in reasons and scene_label != "formal_or_worklike")
         )
         ranked.append({"text": text, "score": score, "reasons": reasons, "accepted": score >= 55 and not hard_reject})

@@ -897,6 +897,13 @@ async def test_style_distill():
         )
         assert state_ranked[0]["text"] == "咋了"
         assert any(item["text"] == "不忙，来" and not item["accepted"] for item in state_ranked)
+        game_ranked = style_rerank_candidates(
+            ["有的呀！想一起开黑吗？", "可瓦", "咋说"],
+            scene_label="private_short_casual",
+            latest_message="有无瓦",
+        )
+        assert game_ranked[0]["text"] in {"可瓦", "咋说"}
+        assert any(item["text"] == "有的呀！想一起开黑吗？" and not item["accepted"] for item in game_ranked)
         task_ranked = style_rerank_candidates(
             ["快了", "难说", "我看看"],
             scene_label="private_short_casual",

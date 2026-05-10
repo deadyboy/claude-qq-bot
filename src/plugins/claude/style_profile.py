@@ -1142,6 +1142,46 @@ def build_style_system_prompt(
     return "\n".join(lines)
 
 
+def _parse_draft_candidates(raw: str) -> List[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    candidates: List[str] = []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            parsed = parsed.get("candidates") or parsed.get("replies") or parsed.get("drafts") or []
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, str) and item.strip():
+                    candidates.append(item.strip())
+    except Exception:
+        pass
+    if candidates:
+        return candidates
+    for line in text.splitlines():
+        cleaned = re.sub(r"^\s*(?:[-*]|\d+[.)、]|候选\s*\d+[:：])\s*", "", line).strip()
+        if cleaned:
+            candidates.append(cleaned)
+    return candidates or [text]
+
+
+def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None) -> str:
+    intent = ((generation_context or {}).get("query_features") or {}).get("intent") or {}
+    examples = (generation_context or {}).get("few_shot_examples") or []
+    if intent.get("game_invitation"):
+        for example in examples:
+            reply = re.sub(r"\s+", " ", str(example.get("owner_reply") or "")).strip()
+            if 1 <= len(reply) <= 12 and not any(marker in reply for marker in ("?", "？", "有的呀", "想一起", "开黑吗")):
+                return reply
+        return "咋说"
+    if intent.get("availability_query") or intent.get("reality_state_query"):
+        return "咋啦"
+    if intent.get("help_request") or intent.get("task_request"):
+        return "发我看看"
+    return "我看看"
+
+
 def _audit_style_generation(
     *,
     actor_id: str | int | None,
@@ -1210,8 +1250,10 @@ async def generate_style_draft(
     profile = store.load()
     generation_context = None
     style_skill_context = None
+    style_rerank_candidates_fn = None
     try:
-        from .style_distill import build_style_generation_context
+        from .style_distill import build_style_generation_context, style_rerank_candidates
+        style_rerank_candidates_fn = style_rerank_candidates
         if include_raw_fewshot is None:
             from .runtime_state import is_style_raw_fewshot_enabled
             include_raw_fewshot = is_style_raw_fewshot_enabled()
@@ -1247,10 +1289,34 @@ async def generate_style_draft(
         user_prompt_parts.append(recent_prompt)
     user_prompt_parts.extend([
         f"对方新消息：{target}",
-        "生成主人下一条自然回复。需要结合最近对话，避免重复上一条回复。",
+        "生成 8 条主人下一条自然回复候选，输出 JSON 数组字符串。",
+        "每条候选只含回复正文；候选之间要有差异；不要解释；不要加标题。",
     ])
-    return await llm_client.chat(
+    raw = await llm_client.chat(
         messages=[{"role": "user", "content": "\n".join(user_prompt_parts)}],
         system_prompt=build_style_system_prompt(profile, generation_context, style_skill_context),
-        temperature=0.6,
+        temperature=0.75,
     )
+    candidates = _parse_draft_candidates(raw)
+    historical_targets = [
+        str(example.get("owner_reply") or "")
+        for example in ((generation_context or {}).get("few_shot_examples") or [])
+        if str(example.get("owner_reply") or "").strip()
+    ]
+    if style_rerank_candidates_fn is None:
+        from .style_distill import style_rerank_candidates as style_rerank_candidates_fn
+    ranked = style_rerank_candidates_fn(
+        candidates,
+        scene_label=scene_label,
+        corrections=(style_skill_context or {}).get("corrections") or [],
+        historical_targets=historical_targets,
+        latest_message=target,
+    )
+    for item in ranked:
+        if item.get("accepted"):
+            return str(item.get("text") or "").strip()
+    if ranked:
+        best = str(ranked[0].get("text") or "").strip()
+        if best and int(ranked[0].get("score") or 0) >= 40:
+            return best
+    return _fallback_style_draft(target, generation_context)
