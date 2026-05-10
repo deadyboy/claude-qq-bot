@@ -1,0 +1,934 @@
+"""Turn and dialogue-pair construction for QCE style distillation."""
+
+from .qce_io import *
+from .phrases import *
+
+
+def detect_message_intent(text: str) -> Dict[str, Any]:
+    """Detect coarse Chinese chat intent without requiring explicit question marks."""
+    normalized = re.sub(r"\s+", "", str(text or "").lower())
+    has_mark = "?" in normalized or "？" in normalized
+    has_question_hint = _contains_any(normalized, QUESTION_HINTS)
+    has_game_term = _contains_any(normalized, GAME_HINTS)
+    has_play_invite_pattern = bool(
+        re.search(r"(有无|有没有|打不打|玩不玩|开不开|上不上|来不来|要不要).{0,8}", normalized)
+    )
+    game_invitation = has_game_term and has_play_invite_pattern
+    availability_query = _contains_any(normalized, AVAILABILITY_HINTS)
+    help_request = _contains_any(normalized, HELP_HINTS)
+    invitation = game_invitation or _contains_any(normalized, INVITATION_HINTS)
+    task_request = _contains_any(normalized, TASK_HINTS)
+    image_reference = _contains_any(normalized, IMAGE_HINTS)
+    reality_state_query = _contains_any(normalized, REALITY_STATE_HINTS)
+    is_question = bool(
+        has_mark
+        or has_question_hint
+        or availability_query
+        or help_request
+        or invitation
+    )
+
+    if game_invitation:
+        question_type = "game_invitation"
+    elif availability_query or reality_state_query:
+        question_type = "availability_or_reality"
+    elif help_request:
+        question_type = "help_request"
+    elif invitation:
+        question_type = "invitation"
+    elif task_request:
+        question_type = "task_request"
+    elif is_question:
+        question_type = "general_question"
+    else:
+        question_type = "statement"
+
+    return {
+        "is_question": is_question,
+        "question_type": question_type,
+        "availability_query": availability_query,
+        "help_request": help_request,
+        "invitation": invitation,
+        "game_invitation": game_invitation,
+        "task_request": task_request,
+        "image_reference": image_reference,
+        "reality_state_query": reality_state_query,
+        "game_term": has_game_term,
+        "question_mark": has_mark,
+        "question_hint": has_question_hint,
+    }
+
+def _features_for_text(text: str) -> Dict[str, Any]:
+    intent = detect_message_intent(text)
+    return {
+        "char_length": len(text),
+        "length_bucket": _bucket_length(len(text)),
+        "emoji_count": len(EMOJI_RE.findall(text)),
+        "has_question": intent["is_question"],
+        "has_exclamation": "!" in text or "！" in text,
+        "has_ellipsis": "..." in text or "…" in text,
+        "has_url": bool(URL_RE.search(text)),
+        "line_count": max(1, text.count("\n") + 1),
+        "intent": intent,
+    }
+
+def _text_ngrams(text: str, n: int = 2) -> set[str]:
+    compact = re.sub(r"\s+", "", text.lower())
+    if not compact:
+        return set()
+    if len(compact) <= n:
+        return {compact}
+    return {compact[i:i + n] for i in range(0, len(compact) - n + 1)}
+
+def _keyword_tokens(text: str) -> set[str]:
+    compact = re.sub(r"\s+", "", str(text or "").lower())
+    tokens = set(re.findall(r"[a-z0-9_]{2,}", compact))
+    chinese = re.findall(r"[\u4e00-\u9fff]+", compact)
+    for chunk in chinese:
+        if len(chunk) <= 2:
+            tokens.add(chunk)
+            continue
+        tokens.update(chunk[i:i + 2] for i in range(len(chunk) - 1))
+        tokens.update(chunk[i:i + 3] for i in range(len(chunk) - 2))
+    intent = detect_message_intent(compact)
+    for key in (
+        "question_type",
+        "availability_query",
+        "help_request",
+        "invitation",
+        "game_invitation",
+        "task_request",
+        "image_reference",
+        "reality_state_query",
+    ):
+        value = intent.get(key)
+        if value:
+            if key == "question_type" and value == "statement":
+                continue
+            tokens.add(f"intent:{key}:{value}" if isinstance(value, str) else f"intent:{key}")
+    return {token for token in tokens if token}
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(1, len(left | right))
+
+def _intent_similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    score = 0.0
+    if left.get("is_question") and right.get("is_question"):
+        score += 0.03
+    if left.get("question_type") == right.get("question_type") and left.get("question_type") != "statement":
+        score += 0.08
+    for key in (
+        "availability_query",
+        "help_request",
+        "invitation",
+        "game_invitation",
+        "task_request",
+        "image_reference",
+        "reality_state_query",
+    ):
+        if left.get(key) and right.get(key):
+            score += 0.05
+    return min(score, 0.28)
+
+def _time_bucket(timestamp: int) -> str:
+    if timestamp <= 0:
+        return ""
+    if timestamp > 10_000_000_000:
+        timestamp = timestamp // 1000
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:00")
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+def _message_ref(message: Dict[str, Any], record_index: int) -> Dict[str, Any]:
+    timestamp = _timestamp(message)
+    return {
+        "record_index": record_index,
+        "id_hash": _sha1_short(str(message.get("id") or ""), 12),
+        "seq_hash": _sha1_short(str(message.get("seq") or ""), 12),
+        "time_bucket": _time_bucket(timestamp),
+    }
+
+def _turn_ref(turn: Dict[str, Any], *, include_text: bool = False) -> Dict[str, Any]:
+    item = {
+        "turn_id": turn["turn_id"],
+        "source_file_id": turn.get("source_file_id"),
+        "relationship_id": turn.get("relationship_id"),
+        "chat_type": turn.get("chat_type"),
+        "chat_id": turn.get("chat_id"),
+        "role": turn["role"],
+        "sender_hash": _sha1_short(str(turn.get("sender_id") or ""), 12),
+        "start_time_bucket": _time_bucket(int(turn.get("start_ts") or 0)),
+        "end_time_bucket": _time_bucket(int(turn.get("end_ts") or 0)),
+        "message_count": len(turn.get("raw_texts") or []),
+        "char_length": len(turn.get("text") or ""),
+        "length_bucket": _bucket_length(len(turn.get("text") or "")),
+        "element_types": list(turn.get("element_types") or []),
+        "messages": list(turn.get("message_refs") or []),
+    }
+    if include_text:
+        item.update({
+            "sender_id": str(turn.get("sender_id") or ""),
+            "raw_texts": list(turn.get("raw_texts") or []),
+            "text": str(turn.get("text") or ""),
+        })
+    return item
+
+def _turns_text(turns: Sequence[Dict[str, Any]], *, roles: set[str] | None = None) -> str:
+    texts = []
+    for turn in turns:
+        if roles and str(turn.get("role") or "") not in roles:
+            continue
+        text = str(turn.get("text") or "").strip()
+        if text:
+            texts.append(text)
+    return "\n".join(texts)
+
+def _build_turns(
+    messages: Sequence[Dict[str, Any]],
+    *,
+    source_file_id: str,
+    relationship_id: str,
+    chat_type: str,
+    self_uin: str,
+) -> List[Dict[str, Any]]:
+    turns: List[Dict[str, Any]] = []
+    current: Dict[str, Any] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        current["text"] = "\n".join(current["raw_texts"]).strip()
+        current["element_types"] = sorted(set(current["element_types"]))
+        current["turn_id"] = _sha1_short(
+            f"{source_file_id}:{current['role']}:{current['sender_id']}:"
+            f"{current['start_index']}:{current['end_index']}:{current['start_ts']}",
+            20,
+        )
+        turns.append(current)
+        current = None
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or _is_system_or_recalled(message):
+            continue
+        text = _message_text(message)
+        if not text or contains_sensitive_content(text):
+            continue
+        sender_id = _sender_uin(message)
+        role = "self" if sender_id == self_uin else "other"
+        if role == "self" and not is_style_training_text_allowed(text):
+            continue
+        timestamp = _timestamp(message)
+        element_types = _element_types(message)
+        same_turn = (
+            current is not None
+            and current["role"] == role
+            and current["sender_id"] == sender_id
+            and timestamp > 0
+            and int(current.get("end_ts") or 0) > 0
+            and timestamp - int(current["end_ts"]) <= TURN_MERGE_SECONDS
+        )
+        if not same_turn:
+            flush()
+            current = {
+                "source_file_id": source_file_id,
+                "relationship_id": relationship_id,
+                "chat_type": chat_type,
+                "chat_id": relationship_id,
+                "role": role,
+                "sender_id": sender_id,
+                "start_index": index,
+                "end_index": index,
+                "start_ts": timestamp,
+                "end_ts": timestamp,
+                "raw_texts": [text],
+                "text": text,
+                "element_types": list(element_types),
+                "message_refs": [_message_ref(message, index)],
+            }
+            continue
+        current["end_index"] = index
+        current["end_ts"] = timestamp
+        current["raw_texts"].append(text)
+        current["element_types"].extend(element_types)
+        current["message_refs"].append(_message_ref(message, index))
+
+    flush()
+    return turns
+
+def _turn_has_direct_reference(turn: Dict[str, Any]) -> bool:
+    element_types = set(turn.get("element_types") or [])
+    text = str(turn.get("text") or "")
+    return bool({"reply", "at"} & element_types) or "@" in text
+
+def _private_context_turns(turns: Sequence[Dict[str, Any]], target_index: int) -> List[Dict[str, Any]]:
+    return list(turns[max(0, target_index - PRIVATE_CONTEXT_TURNS):target_index])
+
+def _group_context_turns(turns: Sequence[Dict[str, Any]], target_index: int) -> List[Dict[str, Any]]:
+    target = turns[target_index]
+    target_ts = int(target.get("start_ts") or 0)
+    context = []
+    for turn in reversed(turns[:target_index]):
+        turn_ts = int(turn.get("end_ts") or 0)
+        if target_ts and turn_ts and target_ts - turn_ts > GROUP_CONTEXT_WINDOW_SECONDS:
+            break
+        context.append(turn)
+        if len(context) >= GROUP_CONTEXT_TURNS:
+            break
+    context.reverse()
+    return context
+
+def _scene_label_for_pair(
+    *,
+    chat_type: str,
+    target_turn: Dict[str, Any],
+    context_turns: Sequence[Dict[str, Any]],
+) -> str:
+    target_text = str(target_turn.get("text") or "")
+    context_text = "\n".join(str(item.get("text") or "") for item in context_turns[-4:])
+    combined = f"{context_text}\n{target_text}"
+    target_features = _features_for_text(target_text)
+    if _contains_any(combined, FORMAL_WORK_HINTS) or target_features["has_url"]:
+        return "formal_or_worklike"
+    if chat_type == "group":
+        if _turn_has_direct_reference(target_turn) or any(_turn_has_direct_reference(item) for item in context_turns[-3:]):
+            return "group_mentioned_or_reply"
+        return "group_interjection"
+    if _contains_any(combined, EMOTIONAL_HINTS) or target_features["has_exclamation"] or target_features["emoji_count"] > 0:
+        return "private_emotional"
+    if len(target_text) >= 80 or target_features["line_count"] > 1:
+        return "private_long_explain"
+    return "private_short_casual"
+
+def _score_dialogue_pair(
+    *,
+    chat_type: str,
+    target_turn: Dict[str, Any],
+    context_turns: Sequence[Dict[str, Any]],
+    scene_label: str,
+) -> tuple[int, List[str]]:
+    score = 0
+    reasons = []
+    text = str(target_turn.get("text") or "")
+    length = len(text)
+    other_context = [item for item in context_turns if item.get("role") == "other"]
+    if other_context:
+        score += 42
+        reasons.append("has_other_turn_context")
+    else:
+        score -= 30
+        reasons.append("no_other_turn_context")
+    if chat_type == "private":
+        score += 24
+        reasons.append("private_turn_pair")
+        if len(context_turns) >= 3:
+            score += 10
+            reasons.append("private_multi_turn_context")
+    else:
+        score += 8
+        reasons.append("group_turn_pair")
+        if scene_label == "group_mentioned_or_reply":
+            score += 18
+            reasons.append("group_directed_context")
+    if 2 <= length <= MAX_REPLY_LENGTH:
+        score += 18
+        reasons.append("usable_target_length")
+    if 8 <= length <= 120:
+        score += 8
+        reasons.append("expressive_target")
+    if len(target_turn.get("raw_texts") or []) > 1:
+        score += 8
+        reasons.append("merged_owner_turn")
+    if scene_label in {"private_long_explain", "formal_or_worklike"}:
+        score += 6
+        reasons.append(scene_label)
+    target_features = _features_for_text(text)
+    if target_features["has_question"]:
+        score += 3
+        reasons.append("question_style")
+    if target_features["has_exclamation"] or target_features["has_ellipsis"]:
+        score += 3
+        reasons.append("punctuation_style")
+    if target_features["has_url"]:
+        score -= 18
+        reasons.append("contains_url")
+    return score, reasons
+
+def _build_dialogue_pairs_for_source(
+    turns: Sequence[Dict[str, Any]],
+    *,
+    source_file_id: str,
+    relationship_id: str,
+    chat_type: str,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    raw_pairs = []
+    index_pairs = []
+    for target_index, target_turn in enumerate(turns):
+        if target_turn.get("role") != "self":
+            continue
+        target_text = str(target_turn.get("text") or "")
+        if not is_style_training_text_allowed(target_text) or len(target_text) > MAX_REPLY_LENGTH * 2:
+            continue
+        if chat_type == "private":
+            context_turns = _private_context_turns(turns, target_index)
+        else:
+            context_turns = _group_context_turns(turns, target_index)
+        if not any(item.get("role") == "other" for item in context_turns):
+            continue
+        if any(
+            item.get("role") == "other" and is_ai_assistant_generated_text(str(item.get("text") or ""))
+            for item in context_turns
+        ):
+            continue
+        scene_label = _scene_label_for_pair(
+            chat_type=chat_type,
+            target_turn=target_turn,
+            context_turns=context_turns,
+        )
+        score, reasons = _score_dialogue_pair(
+            chat_type=chat_type,
+            target_turn=target_turn,
+            context_turns=context_turns,
+            scene_label=scene_label,
+        )
+        if score < 45:
+            continue
+        pair_id = _sha1_short(f"{source_file_id}:{target_turn['turn_id']}:{target_index}", 20)
+        context_refs = [_turn_ref(item, include_text=False) for item in context_turns]
+        context_raw = [_turn_ref(item, include_text=True) for item in context_turns]
+        target_ref = _turn_ref(target_turn, include_text=False)
+        target_raw = _turn_ref(target_turn, include_text=True)
+        target_features = _features_for_text(target_text)
+        index_pair = {
+            "sample_id": pair_id,
+            "pair_id": pair_id,
+            "source_file_id": source_file_id,
+            "relationship_id": relationship_id,
+            "chat_type": chat_type,
+            "scene_label": scene_label,
+            "reply": {
+                **target_ref,
+                "record_index": target_turn["start_index"],
+                "char_length": len(target_text),
+                "length_bucket": _bucket_length(len(target_text)),
+                "features": {
+                    "emoji_count": target_features["emoji_count"],
+                    "has_question": target_features["has_question"],
+                    "has_exclamation": target_features["has_exclamation"],
+                    "has_ellipsis": target_features["has_ellipsis"],
+                    "line_count": target_features["line_count"],
+                    "intent": target_features["intent"],
+                },
+            },
+            "context": {
+                "count": len(context_refs),
+                "turns": context_refs,
+                "messages": [
+                    {**message_ref, "role": turn_ref["role"], "element_types": turn_ref.get("element_types") or []}
+                    for turn_ref in context_refs
+                    for message_ref in turn_ref.get("messages") or []
+                ],
+            },
+            "score": score,
+            "score_reasons": reasons,
+        }
+        raw_pair = {
+            "pair_id": pair_id,
+            "source_file_id": source_file_id,
+            "relationship_id": relationship_id,
+            "chat_type": chat_type,
+            "scene_label": scene_label,
+            "length_bucket": _bucket_length(len(target_text)),
+            "score": score,
+            "context": context_raw,
+            "target": target_raw,
+        }
+        raw_pairs.append(raw_pair)
+        index_pairs.append(index_pair)
+    return raw_pairs, index_pairs
+
+def _context_for(
+    messages: Sequence[Dict[str, Any]],
+    index: int,
+    self_uin: str,
+    window_seconds: int,
+    max_messages: int,
+) -> tuple[List[tuple[int, Dict[str, Any]]], int | None]:
+    reply_time = _timestamp(messages[index])
+    context: List[tuple[int, Dict[str, Any]]] = []
+    first_non_self_delay: int | None = None
+
+    for j in range(index - 1, -1, -1):
+        previous = messages[j]
+        if _is_system_or_recalled(previous):
+            continue
+        previous_time = _timestamp(previous)
+        if reply_time and previous_time and reply_time - previous_time > window_seconds:
+            break
+        text = _message_text(previous)
+        if not _is_useful_text(text):
+            continue
+        is_self = _sender_uin(previous) == self_uin
+        if not is_self and first_non_self_delay is None and reply_time and previous_time:
+            first_non_self_delay = max(0, reply_time - previous_time)
+        context.append((j, previous))
+        if len(context) >= max_messages:
+            break
+
+    context.reverse()
+    return context, first_non_self_delay
+
+def _score_candidate(
+    *,
+    chat_type: str,
+    text: str,
+    context: Sequence[Dict[str, Any]],
+    first_non_self_delay: int | None,
+    element_types: Sequence[str],
+) -> tuple[int, List[str]]:
+    score = 0
+    reasons: List[str] = []
+    length = len(text)
+
+    if first_non_self_delay is not None:
+        score += 40
+        reasons.append("has_recent_other_context")
+        if first_non_self_delay <= 120:
+            score += 8
+            reasons.append("quick_reply")
+    else:
+        score -= 25
+        reasons.append("no_recent_other_context")
+
+    if chat_type == "private":
+        score += 18
+        reasons.append("private_chat")
+    elif chat_type == "group":
+        score += 6
+        reasons.append("group_chat")
+
+    if "reply" in element_types:
+        score += 18
+        reasons.append("explicit_reply")
+    if "at" in element_types:
+        score += 5
+        reasons.append("mentions")
+    if len(context) >= 2:
+        score += min(12, len(context) * 2)
+        reasons.append("multi_message_context")
+
+    if 3 <= length <= 80:
+        score += 16
+        reasons.append("good_length")
+    elif 81 <= length <= MAX_REPLY_LENGTH:
+        score += 8
+        reasons.append("long_but_usable")
+    else:
+        score -= 15
+        reasons.append("weak_length")
+
+    features = _features_for_text(text)
+    if features["has_url"]:
+        score -= 20
+        reasons.append("contains_url")
+    if features["line_count"] > 3:
+        score -= 8
+        reasons.append("multi_line")
+    if features["emoji_count"] > 0:
+        score += 3
+        reasons.append("style_marker_emoji")
+    if features["has_question"]:
+        score += 2
+        reasons.append("question_style")
+    if features["has_exclamation"] or features["has_ellipsis"]:
+        score += 2
+        reasons.append("punctuation_style")
+
+    return score, reasons
+
+def _percentile(values: Sequence[int], ratio: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, math.ceil(len(ordered) * ratio) - 1))
+    return int(ordered[index])
+
+def _merge_counter(target: Counter, values: Iterable[str]) -> None:
+    for value in values:
+        if value:
+            target[value] += 1
+
+def _style_patch_from_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    owner = stats["owner"]
+    lengths = owner["lengths"]
+    avg_length = round(sum(lengths) / len(lengths), 1) if lengths else 0
+    median_length = int(median(lengths)) if lengths else 0
+    short_ratio = owner["length_buckets"].get("1-2", 0) + owner["length_buckets"].get("3-6", 0)
+    short_ratio = short_ratio / max(1, owner["text_messages"])
+    emoji_ratio = owner["emoji_messages"] / max(1, owner["text_messages"])
+    private_count = owner["by_chat_type"].get("private", 0)
+    group_count = owner["by_chat_type"].get("group", 0)
+
+    if avg_length <= 10:
+        length = f"短句为主，平均约 {avg_length} 字，中位数约 {median_length} 字"
+    elif avg_length <= 28:
+        length = f"中短句为主，平均约 {avg_length} 字，中位数约 {median_length} 字"
+    else:
+        length = f"中等长度回复较多，平均约 {avg_length} 字，中位数约 {median_length} 字"
+
+    if emoji_ratio >= 0.35:
+        emoji = "会使用表情/贴图语气，但仍以文字为主"
+    elif emoji_ratio >= 0.08:
+        emoji = "偶尔使用表情或贴图，保持克制"
+    else:
+        emoji = "很少显式使用 emoji；需要时可用短文本表达语气"
+
+    tone_parts = ["口语化", "直接", "低铺垫"]
+    if short_ratio >= 0.45:
+        tone_parts.append("偏短句接话")
+    if group_count > private_count * 2:
+        tone_parts.append("群聊里更像插话和接梗")
+
+    habits = [
+        f"从 {owner['text_messages']} 条本人文本消息蒸馏，只保存统计特征，不保存原文",
+        f"平均回复约 {avg_length} 字，中位数约 {median_length} 字",
+        "优先顺着上下文直接回应，少用正式开场",
+    ]
+    if short_ratio >= 0.45:
+        habits.append("大量回复是短句，适合轻量闲聊和快速确认")
+    if group_count > private_count:
+        habits.append("群聊发言多，常见形态是短插话、接话、反应和补充")
+    if private_count:
+        habits.append("私聊里比群聊更适合保留上下文和具体回应")
+    if owner["question_messages"] / max(1, owner["text_messages"]) >= 0.08:
+        habits.append("会用反问或追问推进对话")
+    if owner["ellipsis_messages"] / max(1, owner["text_messages"]) >= 0.03:
+        habits.append("会用省略号表现停顿或无语感")
+
+    punctuation = []
+    if owner["question_messages"]:
+        punctuation.append("会使用问号表达追问或反问")
+    if owner["exclamation_messages"]:
+        punctuation.append("偶尔用感叹号加强情绪")
+    if owner["ellipsis_messages"]:
+        punctuation.append("会使用省略号表达停顿")
+
+    return {
+        "tone": "、".join(tone_parts),
+        "length": length,
+        "emoji": emoji,
+        "habits": habits,
+        "common_phrases": [],
+        "punctuation": punctuation,
+        "stats": {
+            "source": "qce_offline_stage5b",
+            "sample_count": owner["text_messages"],
+            "candidate_reply_pairs": stats["samples"]["candidate_count"],
+            "indexed_samples": stats["samples"]["indexed_count"],
+            "avg_length": avg_length,
+            "median_length": median_length,
+            "p90_length": _percentile(lengths, 0.9),
+            "private_self_messages": private_count,
+            "group_self_messages": group_count,
+        },
+    }
+
+def _new_source_stats(source_file_id: str, chat_type: str, message_count: int) -> Dict[str, Any]:
+    return {
+        "source_file_id": source_file_id,
+        "chat_type": chat_type,
+        "message_count": message_count,
+        "owner_text_messages": 0,
+        "owner_lengths": [],
+        "candidate_samples": 0,
+        "score_total": 0,
+        "element_types": Counter(),
+        "length_buckets": Counter(),
+        "quick_replies": 0,
+        "question_messages": 0,
+        "exclamation_messages": 0,
+        "ellipsis_messages": 0,
+    }
+
+def _relationship_labels(item: Dict[str, Any]) -> List[str]:
+    labels = []
+    chat_type = item["chat_type"]
+    message_count = int(item.get("message_count") or 0)
+    owner_count = int(item.get("owner_text_messages") or 0)
+    candidates = int(item.get("candidate_samples") or 0)
+    avg_length = float(item.get("avg_length") or 0)
+    owner_ratio = owner_count / max(1, message_count)
+
+    labels.append("private_dialogue" if chat_type == "private" else "group_chat")
+
+    if owner_count < 20:
+        labels.append("low_evidence")
+    elif owner_count >= 1000:
+        labels.append("high_evidence")
+    else:
+        labels.append("medium_evidence")
+
+    if avg_length <= 8:
+        labels.append("terse_replies")
+    elif avg_length <= 24:
+        labels.append("brief_replies")
+    else:
+        labels.append("detailed_replies")
+
+    if chat_type == "private":
+        if owner_count >= 800 and owner_ratio >= 0.25:
+            labels.append("high_familiarity_private")
+        elif owner_count >= 100:
+            labels.append("active_private")
+        else:
+            labels.append("light_private")
+    else:
+        if owner_ratio >= 0.05 and owner_count >= 300:
+            labels.append("active_group_participant")
+        elif owner_count >= 100:
+            labels.append("occasional_group_participant")
+        else:
+            labels.append("low_frequency_group")
+
+    if candidates >= 50:
+        labels.append("strong_context_reply_source")
+    elif candidates >= 10:
+        labels.append("usable_context_reply_source")
+    return labels
+
+def _build_relationship_profiles(source_stats: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    profiles = []
+    for item in source_stats.values():
+        lengths = item["owner_lengths"]
+        avg_length = round(sum(lengths) / len(lengths), 1) if lengths else 0
+        median_length = int(median(lengths)) if lengths else 0
+        public_item = {
+            "source_file_id": item["source_file_id"],
+            "chat_type": item["chat_type"],
+            "message_count": item["message_count"],
+            "owner_text_messages": item["owner_text_messages"],
+            "candidate_samples": item["candidate_samples"],
+            "avg_length": avg_length,
+            "median_length": median_length,
+            "length_buckets": dict(item["length_buckets"]),
+            "element_types": dict(item["element_types"].most_common(10)),
+            "quick_replies": item["quick_replies"],
+            "question_messages": item["question_messages"],
+            "exclamation_messages": item["exclamation_messages"],
+            "ellipsis_messages": item["ellipsis_messages"],
+        }
+        public_item["labels"] = _relationship_labels(public_item)
+        if item["candidate_samples"]:
+            public_item["avg_sample_score"] = round(item["score_total"] / item["candidate_samples"], 1)
+        else:
+            public_item["avg_sample_score"] = 0
+        profiles.append(public_item)
+
+    profiles.sort(
+        key=lambda p: (
+            -int(p["candidate_samples"]),
+            -int(p["owner_text_messages"]),
+            str(p["source_file_id"]),
+        )
+    )
+    label_counts = Counter(label for profile in profiles for label in profile["labels"])
+    return {
+        "schema_version": 1,
+        "raw_text_policy": "No raw chat text is stored in relationship profiles.",
+        "profile_count": len(profiles),
+        "label_counts": dict(label_counts.most_common()),
+        "profiles": profiles[:MAX_RELATIONSHIP_PROFILES],
+    }
+
+def _build_evaluation_report(
+    *,
+    summary: Dict[str, Any],
+    relationship_profiles: Dict[str, Any],
+    indexed: Sequence[Dict[str, Any]],
+    phrase_profile: Dict[str, Any],
+    taxonomy_summary: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    score_buckets = Counter(str((int(item["score"]) // 10) * 10) for item in indexed)
+    relation_profiles = relationship_profiles.get("profiles") or []
+    strong_sources = sum(1 for item in relation_profiles if "strong_context_reply_source" in (item.get("labels") or []))
+    usable_sources = sum(1 for item in relation_profiles if "usable_context_reply_source" in (item.get("labels") or []))
+    low_evidence = sum(1 for item in relation_profiles if "low_evidence" in (item.get("labels") or []))
+    samples = (summary.get("stats") or {}).get("samples") or {}
+    owner = (summary.get("stats") or {}).get("owner") or {}
+    turns = (summary.get("stats") or {}).get("turns") or {}
+    scene_counts = samples.get("scene_counts") or {}
+    sample_chat_counts = samples.get("chat_type_counts") or {}
+    pair_total = int(samples.get("dialogue_pair_count") or samples.get("candidate_count") or 0)
+    phrase_global = phrase_profile.get("global") or {}
+    common_phrases_empty = not any(
+        phrase_global.get(name)
+        for name in (
+            "high_freq_short_replies",
+            "confirmation_templates",
+            "negative_templates",
+            "rhetorical_templates",
+        )
+    )
+
+    readiness = "weak"
+    indexed_count = int(samples.get("indexed_count") or 0)
+    owner_text = int(owner.get("text_messages") or 0)
+    if indexed_count >= 1000 and strong_sources >= 5:
+        readiness = "strong"
+    elif indexed_count >= 300 and (strong_sources + usable_sources) >= 3:
+        readiness = "usable"
+
+    return {
+        "schema_version": 1,
+        "run_id": summary.get("run_id"),
+        "raw_text_policy": "No raw chat text is stored in this evaluation report.",
+        "readiness": readiness,
+        "owner_text_messages": owner_text,
+        "turn_count": int(turns.get("count") or 0),
+        "dialogue_pair_count": pair_total,
+        "indexed_samples": indexed_count,
+        "candidate_samples": int(samples.get("candidate_count") or 0),
+        "high_quality_samples": int(samples.get("high_quality_count") or 0),
+        "scene_counts": dict(scene_counts),
+        "taxonomy": taxonomy_summary or {},
+        "chat_type_ratio": {
+            "private": round(int(sample_chat_counts.get("private") or 0) / max(1, pair_total), 4),
+            "group": round(int(sample_chat_counts.get("group") or 0) / max(1, pair_total), 4),
+        },
+        "common_phrases_empty": common_phrases_empty,
+        "score_buckets": dict(score_buckets.most_common()),
+        "relationship_sources": {
+            "total": len(relation_profiles),
+            "strong": strong_sources,
+            "usable": usable_sources,
+            "low_evidence": low_evidence,
+        },
+        "recommendations": [
+            "先使用草稿模式，不开启自动发送。",
+            "下一步优先补关系/场景标签，再做相似样本临时检索。",
+            "对高风险现实状态、承诺、金钱和隐私问题继续保持拒绝或模糊草稿。",
+        ] + (
+            ["有效 dialogue pairs 少于 3000：不要 LoRA/微调，先做 RAG 草稿模式。"]
+            if int(samples.get("dialogue_pair_count") or samples.get("candidate_count") or 0) < 3000
+            else []
+        ),
+    }
+
+def _scene_key_for_sample(sample: Dict[str, Any]) -> str:
+    explicit = str(sample.get("scene_label") or "").strip()
+    if explicit:
+        return explicit
+    reply = sample.get("reply") or {}
+    features = reply.get("features") or {}
+    context = sample.get("context") or {}
+    reasons = set(sample.get("score_reasons") or [])
+    parts = [str(sample.get("chat_type") or "unknown")]
+    if "explicit_reply" in reasons:
+        parts.append("explicit_reply")
+    elif "mentions" in reasons:
+        parts.append("mentioned")
+    elif int(context.get("count") or 0) >= 3:
+        parts.append("multi_context")
+    else:
+        parts.append("direct_context")
+    if features.get("has_question"):
+        parts.append("question_reply")
+    elif features.get("has_exclamation"):
+        parts.append("emotional_reply")
+    elif features.get("has_ellipsis"):
+        parts.append("pause_reply")
+    else:
+        parts.append("plain_reply")
+    parts.append(str(reply.get("length_bucket") or "unknown_len"))
+    return "::".join(parts)
+
+def _scene_recommendation(scene_id: str, avg_reply_length: float) -> str:
+    if "question_reply" in scene_id:
+        return "contextual_follow_up"
+    if "group" in scene_id and avg_reply_length <= 12:
+        return "brief_group_interjection"
+    if "private" in scene_id and avg_reply_length >= 20:
+        return "contextual_private_reply"
+    if "emotional_reply" in scene_id:
+        return "short_reaction"
+    return "terse_contextual_reply"
+
+def _build_scene_profiles(indexed: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    scenes: Dict[str, Dict[str, Any]] = {}
+    for sample in indexed:
+        scene_id = _scene_key_for_sample(sample)
+        reply = sample.get("reply") or {}
+        context = sample.get("context") or {}
+        features = reply.get("features") or {}
+        item = scenes.setdefault(scene_id, {
+            "scene_id": scene_id,
+            "sample_count": 0,
+            "chat_types": Counter(),
+            "length_buckets": Counter(),
+            "element_types": Counter(),
+            "context_count_buckets": Counter(),
+            "score_total": 0,
+            "reply_length_total": 0,
+            "question_replies": 0,
+            "exclamation_replies": 0,
+            "ellipsis_replies": 0,
+            "quick_replies": 0,
+            "sample_refs": [],
+        })
+        item["sample_count"] += 1
+        item["chat_types"][str(sample.get("chat_type") or "unknown")] += 1
+        item["length_buckets"][str(reply.get("length_bucket") or "unknown")] += 1
+        _merge_counter(item["element_types"], reply.get("element_types") or [])
+        context_count = int(context.get("count") or 0)
+        if context_count <= 1:
+            item["context_count_buckets"]["1"] += 1
+        elif context_count <= 3:
+            item["context_count_buckets"]["2-3"] += 1
+        else:
+            item["context_count_buckets"]["4+"] += 1
+        item["score_total"] += int(sample.get("score") or 0)
+        item["reply_length_total"] += int(reply.get("char_length") or 0)
+        if features.get("has_question"):
+            item["question_replies"] += 1
+        if features.get("has_exclamation"):
+            item["exclamation_replies"] += 1
+        if features.get("has_ellipsis"):
+            item["ellipsis_replies"] += 1
+        if int(context.get("first_non_self_delay_seconds") or 999999) <= 120:
+            item["quick_replies"] += 1
+        if len(item["sample_refs"]) < 12:
+            item["sample_refs"].append(str(sample.get("sample_id") or ""))
+
+    profiles = []
+    for item in scenes.values():
+        sample_count = max(1, item["sample_count"])
+        avg_reply_length = round(item["reply_length_total"] / sample_count, 1)
+        profiles.append({
+            "scene_id": item["scene_id"],
+            "sample_count": item["sample_count"],
+            "chat_types": dict(item["chat_types"]),
+            "length_buckets": dict(item["length_buckets"]),
+            "element_types": dict(item["element_types"].most_common(10)),
+            "context_count_buckets": dict(item["context_count_buckets"]),
+            "avg_score": round(item["score_total"] / sample_count, 1),
+            "avg_reply_length": avg_reply_length,
+            "question_ratio": round(item["question_replies"] / sample_count, 3),
+            "exclamation_ratio": round(item["exclamation_replies"] / sample_count, 3),
+            "ellipsis_ratio": round(item["ellipsis_replies"] / sample_count, 3),
+            "quick_reply_ratio": round(item["quick_replies"] / sample_count, 3),
+            "recommended_style": _scene_recommendation(item["scene_id"], avg_reply_length),
+            "sample_refs": [ref for ref in item["sample_refs"] if ref],
+        })
+    profiles.sort(key=lambda item: (-int(item["sample_count"]), -float(item["avg_score"]), item["scene_id"]))
+    return {
+        "schema_version": 1,
+        "raw_text_policy": "No raw chat text is stored in scene profiles.",
+        "scene_count": len(profiles),
+        "profiles": profiles,
+    }
+
+
+__all__ = [name for name in globals() if not name.startswith("__")]
