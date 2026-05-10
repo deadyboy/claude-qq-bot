@@ -1170,11 +1170,11 @@ def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None
     intent = ((generation_context or {}).get("query_features") or {}).get("intent") or {}
     examples = (generation_context or {}).get("few_shot_examples") or []
     if intent.get("game_invitation"):
-        safe_replies = ("暂无", "等一会", "等下", "可以问问c0", "何意", "咋说")
+        safe_replies = ("暂无", "等一会", "可以问问c0", "何意", "无")
         for example in examples:
             reply = re.sub(r"\s+", " ", str(example.get("owner_reply") or "")).strip()
             compact = re.sub(r"\s+", "", reply.strip("。.!！?？~～"))
-            if any(marker in compact for marker in ("暂无", "等", "问问", "何意", "咋说", "无")):
+            if any(marker in compact for marker in ("暂无", "暂不", "等", "问问", "何意", "无", "不打")):
                 return reply
         return safe_replies[0]
     if intent.get("availability_query") or intent.get("reality_state_query"):

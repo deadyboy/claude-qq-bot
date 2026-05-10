@@ -103,9 +103,10 @@ def style_rerank_candidates(
         "来", "我来", "上号", "能瓦",
     }
     game_safe_replies = {
-        "无", "暂无", "暂不", "等会", "等一会", "等下", "等等",
-        "可以问问", "问问", "何意", "何意味", "咋说", "咋了",
+        "无", "没有", "不打", "暂无", "暂不", "等会", "等一会", "等下", "等等",
+        "可以问问", "问问", "何意", "何意味",
     }
+    game_weak_probe_replies = {"咋了", "咋说", "啥事", "干嘛"}
     history_texts = [
         re.sub(r"\s+", " ", str(item or "")).strip()
         for item in (historical_targets or [])
@@ -190,6 +191,9 @@ def style_rerank_candidates(
             if compact_text in game_safe_replies or "可以问问" in compact_text:
                 score += 16
                 reasons.append("safe_game_deflection")
+            if compact_text in game_weak_probe_replies:
+                score -= 18
+                reasons.append("weak_game_probe")
             if text.endswith(("！", "!")):
                 score -= 12
                 reasons.append("over_excited_game_invite")

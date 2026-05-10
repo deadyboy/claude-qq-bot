@@ -58,6 +58,7 @@ from .style_profile import (
     style_store,
 )
 from .style_distill import (
+    detect_message_intent,
     format_qce_distillation_result,
     format_similar_sample_results,
     format_style_debug_report,
@@ -1037,6 +1038,26 @@ def should_allow_plain_chat(event: MessageEvent) -> bool:
     return False
 
 
+def should_route_owner_plain_style_test(event: MessageEvent, text: str, images: list[Any] | None = None) -> bool:
+    """Route short owner private style probes through Stage 5B instead of generic assistant."""
+    if not isinstance(event, PrivateMessageEvent):
+        return False
+    if not is_owner_event(event):
+        return False
+    if images:
+        return False
+    stripped = str(text or "").strip()
+    if not stripped or _looks_like_command_text(stripped):
+        return False
+    if len(stripped) > 40:
+        return False
+    try:
+        intent = detect_message_intent(stripped)
+    except Exception:
+        return False
+    return bool(intent.get("game_invitation"))
+
+
 def _looks_like_command_text(text: str) -> bool:
     stripped = text.strip()
     if stripped.startswith("/"):
@@ -1158,6 +1179,29 @@ async def handle_simple_chat(
             text = "在不在"
 
     if not text and not images:
+        return
+
+    if should_route_owner_plain_style_test(event, text, images):
+        session_id = get_session_id(event)
+        history = await chat_session_manager.get_messages(session_id)
+        await chat_session_manager.add_message(session_id, "user", text)
+        try:
+            draft = await generate_style_draft(
+                text,
+                include_raw_fewshot=is_style_raw_fewshot_enabled(),
+                chat_type="private",
+                target_id=event.user_id,
+                actor_id=event.user_id,
+                scope="private_owner_style_test",
+                recent_dialogue=history,
+            )
+            response = format_reply(draft)
+            for part in split_qq_msg(response):
+                await send_qq_text(bot, event, part)
+            await chat_session_manager.add_message(session_id, "assistant", response)
+        except Exception as e:
+            write_runtime_error("owner_plain_style_test", e)
+            await send_qq_text(bot, event, f"风格草稿生成失败：{type(e).__name__}")
         return
 
     if await maybe_handle_style_teaching_review(bot, event, text):
