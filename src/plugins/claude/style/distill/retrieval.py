@@ -602,6 +602,8 @@ def _derive_generation_guidance(
         labels.update(item.get("labels") or [])
 
     intent = query_features.get("intent") or {}
+    risk_level = int(intent.get("commitment_risk_level") or 0)
+    risk_label = str(intent.get("commitment_risk_label") or "phatic_social")
     if intent.get("game_invitation"):
         target_length = min(target_length, 12)
         length_instruction = "优先 3-12 字短回复，像自然邀约接话"
@@ -617,10 +619,12 @@ def _derive_generation_guidance(
     else:
         length_instruction = "可以稍微展开，但保持口语化"
 
-    if intent.get("game_invitation"):
-        stance = "对方在发游戏邀约时，优先短句接话；不知道主人是否能玩时不要替主人承诺上线。"
+    if risk_level >= 3:
+        stance = "对方涉及账号、凭据、钱或严肃确认时，必须守住硬边界；可以用主人的语气拒绝或要求主人亲自确认。"
+    elif intent.get("game_invitation"):
+        stance = "对方在发低风险游戏/社交邀约时，优先像主人一样短句接话；可自然拒绝、含糊拖延、问第三人或反问，不要用 AI 式热情邀约。"
     elif intent.get("availability_query") or intent.get("reality_state_query"):
-        stance = "对方在问主人现实状态或可用性时，不要替主人确认忙闲、位置或进度；优先自然追问或模糊过渡。"
+        stance = "对方在问主人现实状态或可用性时，保留主人的口气，但把具体忙闲、位置、进度等事实模糊化。"
     elif intent.get("help_request"):
         stance = "对方在求助时，先接住请求；信息不足时让对方发具体内容或说明卡在哪一步。"
     elif intent.get("invitation"):
@@ -641,6 +645,9 @@ def _derive_generation_guidance(
         "dominant_relationship_labels": dict(labels.most_common(8)),
         "draft_policy": "draft_only_no_auto_send",
         "reality_policy": "do_not_invent_owner_state_or_commitments",
+        "commitment_risk_level": risk_level,
+        "commitment_risk_label": risk_label,
+        "commitment_risk_reasons": intent.get("commitment_risk_reasons") or [],
         "intent_summary": {
             "question_type": intent.get("question_type") or "unknown",
             "availability_query": bool(intent.get("availability_query")),
@@ -650,6 +657,9 @@ def _derive_generation_guidance(
             "task_request": bool(intent.get("task_request")),
             "image_reference": bool(intent.get("image_reference")),
             "reality_state_query": bool(intent.get("reality_state_query")),
+            "high_risk_request": bool(intent.get("high_risk_request")),
+            "commitment_risk_level": risk_level,
+            "commitment_risk_label": risk_label,
         },
     }
 
@@ -681,7 +691,7 @@ def format_style_debug_report(
     mapping = context.get("target_mapping") or {}
     guidance = context.get("guidance") or {}
     lines = [
-        "Stage 5B-RAG 风格调试：",
+        "Stage 5B-RAG 风格调试（含 Stage 5C 风险字段）：",
         f"- run_id：{context.get('run_id')}",
         f"- readiness：{context.get('readiness')}",
         f"- 检索策略：{context.get('retrieval_strategy') or 'rules_only'}",
@@ -696,6 +706,7 @@ def format_style_debug_report(
             f"任务={bool(intent.get('task_request'))}，"
             f"图片={bool(intent.get('image_reference'))}"
         ),
+        f"- 承诺风险：L{intent.get('commitment_risk_level', 0)} {intent.get('commitment_risk_label') or 'phatic_social'}",
         f"- 策略：{guidance.get('stance_instruction')}",
         f"- 长度：{guidance.get('length_instruction')}，目标约 {guidance.get('target_reply_length')} 字",
     ]

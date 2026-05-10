@@ -1011,8 +1011,13 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
             lines.append(f"- 长度：{guidance['length_instruction']}，目标约 {guidance.get('target_reply_length')} 字")
         if guidance.get("stance_instruction"):
             lines.append(f"- 应对方式：{guidance['stance_instruction']}")
+        if guidance.get("commitment_risk_label") is not None:
+            lines.append(
+                f"- 承诺风险：L{guidance.get('commitment_risk_level', 0)} "
+                f"{guidance.get('commitment_risk_label')}"
+            )
         if guidance.get("reality_policy"):
-            lines.append("- 现实状态：不要编造主人是否忙、在哪、是否完成、是否答应等事实。")
+            lines.append("- 现实状态：把未知事实模糊化，不要编造主人是否忙、在哪、是否完成、是否答应。")
 
     query_features = context.get("query_features") or {}
     if query_features:
@@ -1032,7 +1037,8 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
                 f"求助={bool(intent.get('help_request'))}，"
                 f"邀约={bool(intent.get('invitation'))}，"
                 f"游戏邀约={bool(intent.get('game_invitation'))}，"
-                f"任务={bool(intent.get('task_request'))}"
+                f"任务={bool(intent.get('task_request'))}，"
+                f"承诺风险=L{intent.get('commitment_risk_level', 0)} {intent.get('commitment_risk_label') or 'phatic_social'}"
             )
 
     samples = context.get("similar_samples") or []
@@ -1070,7 +1076,10 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
     examples = context.get("few_shot_examples") or []
     if examples:
         lines.append("真实历史 few-shot 样本：")
-        lines.append("只学习“对方上下文 -> 主人回复”的表达映射，不要照抄其中的具体事实、姓名、时间、地点或承诺。")
+        lines.append(
+            "把样本拆成[语用外壳/句式节奏/口癖]和[实体事实]：强学习外壳，"
+            "但把时间、地点、人物、数值、现实状态和承诺替换成当前上下文下的安全模糊表述。"
+        )
         for index, example in enumerate(examples[:3], start=1):
             lines.append(f"样本 {index}：")
             for item in example.get("context") or []:
@@ -1104,13 +1113,16 @@ def build_style_system_prompt(
 ) -> str:
     data = normalize_style_profile(profile)
     lines = [
-        "你是一个回复草稿生成器，任务是模仿“主人”的日常聊天风格生成一条可复制的中文回复草稿。",
+        "你是“主人”的聊天代写器，任务是尽量像主人本人一样生成一条可复制的中文回复草稿。",
         "只输出草稿正文，不要解释，不要加标题。",
-        "不要声称自己是机器人；不要代替主人承诺无法确认的现实行动；不要编造事实。",
+        "首要目标是像主人真实聊天：短促、自然、有个人口癖，避免通用 AI 助手腔。",
+        "不要声称自己是机器人；涉及未知现实状态时只模糊处理，不要编造具体事实。",
         "必须先理解并回应对方当前消息，不要用万能寒暄敷衍。",
-        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，生成自然但不确认事实的草稿，例如“咋啦”“啥事”“我看下”，不要直接替主人回答“在家/不忙/已经做了”。",
+        "对低风险社交接话和游戏邀约，优先模仿主人历史里的短句、反问、拖延、拒绝或问第三人的方式，不要自动变热情客服。",
+        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，保留主人口气但模糊事实，不要直接替主人回答“在家/不忙/已经做了”。",
         "不要连续重复同一句或同一个口头禅；如果最近已经说过“刚看到”，下一条不要再用。",
         "遇到[表情]、[动画表情]、[图片]时，可以按语气接话，但不要假装看清图片具体内容。",
+        "看到历史真实样本时，拆出[语用外壳]+[实体内容]：学习句式骨架、口癖和停顿方式，替换样本里的具体实体事实。",
     ]
     skill_prompt = format_style_skill_context_for_prompt(style_skill_context)
     if skill_prompt:
@@ -1133,7 +1145,7 @@ def build_style_system_prompt(
         lines.append("标点习惯：")
         lines.extend(f"- {item}" for item in data["punctuation"][:5])
     if data.get("examples"):
-        lines.append("主人真实回复样本，仅学习表达风格，不要照抄隐私内容：")
+        lines.append("主人真实回复样本，学习句式骨架和口癖，不要照搬具体事实：")
         for example in data["examples"][-5:]:
             lines.append(f"- {example['text']}")
     context_prompt = format_generation_context_for_prompt(generation_context)
@@ -1167,31 +1179,8 @@ def _parse_draft_candidates(raw: str) -> List[str]:
 
 
 def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None) -> str:
-    intent = ((generation_context or {}).get("query_features") or {}).get("intent") or {}
-    examples = (generation_context or {}).get("few_shot_examples") or []
-    if intent.get("game_invitation"):
-        safe_replies = ("暂无", "等一会", "可以问问c0", "何意", "无")
-        for example in examples:
-            reply = re.sub(r"\s+", " ", str(example.get("owner_reply") or "")).strip()
-            compact = re.sub(r"\s+", "", reply.strip("。.!！?？~～"))
-            if any(marker in compact for marker in ("暂无", "暂不", "等", "问问", "何意", "无", "不打")):
-                return reply
-        return safe_replies[0]
-    if intent.get("availability_query") or intent.get("reality_state_query"):
-        return "咋啦"
-    if intent.get("help_request") or intent.get("task_request"):
-        return "发我看看"
+    """System-level fallback only, used when generation/rerank yields nothing usable."""
     return "我看看"
-
-
-def _requires_safe_fallback(generation_context: Dict[str, Any] | None) -> bool:
-    intent = ((generation_context or {}).get("query_features") or {}).get("intent") or {}
-    return bool(
-        intent.get("game_invitation")
-        or intent.get("availability_query")
-        or intent.get("reality_state_query")
-        or intent.get("task_request")
-    )
 
 
 def _audit_style_generation(
@@ -1344,6 +1333,8 @@ async def generate_style_draft_result(
     ranked = style_rerank_candidates_fn(
         candidates,
         scene_label=scene_label,
+        target_length=((generation_context or {}).get("guidance") or {}).get("target_reply_length"),
+        style_profile=profile,
         corrections=(style_skill_context or {}).get("corrections") or [],
         historical_targets=historical_targets,
         latest_message=target,
@@ -1355,14 +1346,13 @@ async def generate_style_draft_result(
             selected = str(item.get("text") or "").strip()
             selection_reason = "accepted_candidate"
             break
-    if selected is None and _requires_safe_fallback(generation_context):
-        selected = _fallback_style_draft(target, generation_context)
-        selection_reason = "safe_fallback"
     if selected is None and ranked:
-        best = str(ranked[0].get("text") or "").strip()
-        if best and int(ranked[0].get("score") or 0) >= 40:
-            selected = best
-            selection_reason = "best_low_risk_candidate"
+        for item in ranked:
+            best = str(item.get("text") or "").strip()
+            if best and not item.get("hard_reject") and int(item.get("score") or 0) >= 42:
+                selected = best
+                selection_reason = "soft_low_score_candidate"
+                break
     if selected is None:
         selected = _fallback_style_draft(target, generation_context)
         selection_reason = "fallback"
@@ -1392,7 +1382,7 @@ def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
     if not result:
         return ""
     lines = [
-        "候选筛选：",
+        "候选决策矩阵：",
         f"- 选择原因：{result.get('selection_reason')}",
     ]
     call = result.get("call") or {}
@@ -1403,9 +1393,21 @@ def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
     )
     for index, item in enumerate((result.get("ranked_candidates") or [])[:max(1, int(limit))], start=1):
         accepted = "Y" if item.get("accepted") else "N"
-        reasons = ",".join((item.get("reasons") or [])[:4])
+        reasons = ",".join(
+            (
+                (item.get("persona_reasons") or [])[:2]
+                + (item.get("scene_reasons") or [])[:1]
+                + (item.get("risk_reasons") or [])[:2]
+                + (item.get("reasons") or [])[:3]
+            )[:6]
+        )
+        hard = " hard=" + ",".join((item.get("hard_reject_reasons") or [])[:2]) if item.get("hard_reject") else ""
         lines.append(
-            f"{index}. {accepted} score={item.get('score')} "
-            f"behavior={item.get('behavior')} text={item.get('text')} reasons={reasons}"
+            f"{index}. {accepted} total={item.get('score')} "
+            f"style={item.get('style_score')} scene={item.get('scene_score')} "
+            f"risk=-{item.get('risk_penalty')} hygiene=-{item.get('hygiene_penalty')} "
+            f"L{item.get('commitment_risk_level', 0)}:{item.get('commitment_risk_label')} "
+            f"behavior={item.get('behavior')} text={item.get('text')} "
+            f"reasons={reasons}{hard}"
         )
     return "\n".join(lines)

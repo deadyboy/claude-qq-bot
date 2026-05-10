@@ -56,18 +56,106 @@ def build_retrieval_first_prompt(
     lines.append(f"生成 {count} 条候选，彼此要有差异，但都保持口语、自然、短。")
     return "\n".join(lines)
 
+
+def _compact_reply_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").strip("。.!！?？~～\"'“”"))
+
+
+def _commitment_risk(intent: Dict[str, Any]) -> tuple[int, str]:
+    try:
+        level = int(intent.get("commitment_risk_level") or 0)
+    except (TypeError, ValueError):
+        level = 0
+    return max(0, min(3, level)), str(intent.get("commitment_risk_label") or "phatic_social")
+
+
+def _profile_phrase_set(style_profile: Dict[str, Any] | None) -> set[str]:
+    phrases: set[str] = set()
+    if not isinstance(style_profile, dict):
+        return phrases
+    for item in style_profile.get("common_phrases") or []:
+        text = _compact_reply_text(str(item or ""))
+        if 2 <= len(text) <= 16:
+            phrases.add(text)
+    for item in style_profile.get("habits") or []:
+        for part in re.split(r"[、,，；;:\s]+", str(item or "")):
+            text = _compact_reply_text(part)
+            if 2 <= len(text) <= 16 and not text.startswith(("平均回复", "中位数")):
+                phrases.add(text)
+    return phrases
+
+
+def _punctuation_signature(text: str) -> Dict[str, Any]:
+    raw = str(text or "")
+    compact = _compact_reply_text(raw)
+    return {
+        "no_punct": not bool(re.search(r"[，,。.!！?？；;~～…]", raw)),
+        "question": "?" in raw or "？" in raw,
+        "exclaim": "!" in raw or "！" in raw,
+        "ellipsis": "..." in raw or "…" in raw,
+        "wave": "~" in raw or "～" in raw,
+        "line_count": max(1, raw.count("\n") + 1),
+        "short": len(compact) <= 8,
+    }
+
+
+def _structural_similarity(left: str, right: str) -> float:
+    left_sig = _punctuation_signature(left)
+    right_sig = _punctuation_signature(right)
+    keys = ("no_punct", "question", "exclaim", "ellipsis", "wave", "short")
+    matches = sum(1 for key in keys if left_sig.get(key) == right_sig.get(key))
+    score = matches / max(1, len(keys))
+    if left_sig["line_count"] == right_sig["line_count"]:
+        score += 0.08
+    return min(1.0, score)
+
+
+def _length_fit_score(text: str, target_length: float | None, target_max: int) -> tuple[int, str]:
+    compact_len = len(_compact_reply_text(text))
+    if compact_len <= 0:
+        return -30, "empty_length"
+    if target_length and target_length > 0:
+        diff = abs(compact_len - float(target_length))
+        tolerance = max(3.0, min(12.0, float(target_length) * 0.55))
+        if diff <= tolerance:
+            return 18, "length_close_to_profile"
+        return -min(24, int(round((diff - tolerance) * 1.8))), "length_far_from_profile"
+    if 2 <= compact_len <= target_max:
+        return 12, "length_ok"
+    return -min(24, abs(compact_len - target_max)), "length_off"
+
+
 def classify_reply_behavior(text: str, *, latest_message: str = "") -> Dict[str, Any]:
     """Classify what a candidate is doing, separate from surface wording."""
     latest_intent = detect_message_intent(latest_message) if latest_message else {}
+    risk_level, risk_label = _commitment_risk(latest_intent)
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip("\"'“”")
-    compact = re.sub(r"\s+", "", cleaned.strip("。.!！?？~～"))
+    compact = _compact_reply_text(cleaned)
     result: Dict[str, Any] = {
         "label": "neutral",
         "safe_for_context": True,
         "reasons": [],
+        "commitment_risk_level": risk_level,
+        "commitment_risk_label": risk_label,
     }
     if not cleaned:
-        return {"label": "empty", "safe_for_context": False, "reasons": ["empty"]}
+        return {
+            "label": "empty",
+            "safe_for_context": False,
+            "reasons": ["empty"],
+            "commitment_risk_level": risk_level,
+            "commitment_risk_label": risk_label,
+        }
+
+    if latest_intent.get("high_risk_request"):
+        risky_grant = (
+            "发你", "给你", "发给你", "可以登", "给你登", "你登吧", "验证码",
+            "我转", "转你", "打给你", "行我给", "可以给", "直接给",
+        )
+        if any(marker in cleaned for marker in risky_grant):
+            result.update({"label": "high_risk_grant", "safe_for_context": False})
+            result["reasons"].append("credential_or_finance_commitment")
+            return result
 
     if latest_intent.get("game_invitation"):
         assistant_invite = (
@@ -121,11 +209,18 @@ def style_rerank_candidates(
     *,
     scene_label: str = "",
     max_length: int | None = None,
+    target_length: float | None = None,
+    style_profile: Dict[str, Any] | None = None,
     corrections: Sequence[Dict[str, Any]] | None = None,
     historical_targets: Sequence[str] | None = None,
     latest_message: str = "",
 ) -> List[Dict[str, Any]]:
-    """Filter candidates that are too formal, too long, or assistant-like."""
+    """Rerank candidates by persona fit, scene fit, and commitment risk.
+
+    Stage 5C keeps safety as a dimension instead of a blanket override. Hard
+    rejection is reserved for malformed text, credential/finance leakage, and
+    exact raw-history/current-message copying.
+    """
     formal_markers = (
         "您好", "请问", "非常抱歉", "感谢", "作为", "以下是", "总结一下",
         "整理如下", "建议你", "需要注意的是", "你好！我是",
@@ -135,9 +230,14 @@ def style_rerank_candidates(
         "我可以帮你", "有什么可以帮", "好问题", "让我帮你", "让我来",
         "随时准备协助", "科研助手", "数字伙伴", "模型", "prompt",
     )
+    ai_flavor_prefixes = (
+        "好的，", "好的,", "理解了", "明白了", "收到，我", "没问题，我",
+        "当然可以", "可以的，我", "我来帮你", "作为一个",
+    )
     target_max = max_length or (72 if scene_label in {"private_long_explain", "formal_or_worklike"} else 32)
     correction_items = list(corrections or [])
     latest_intent = detect_message_intent(latest_message) if latest_message else {}
+    commitment_level, commitment_label = _commitment_risk(latest_intent)
     state_claim_markers = (
         "不忙", "有空", "在家", "在宿舍", "在学校", "刚醒", "刚起",
         "刚坐下", "已经到了", "快到了", "做完了", "弄完了", "搞完了",
@@ -159,6 +259,7 @@ def style_rerank_candidates(
         for item in (historical_targets or [])
         if str(item or "").strip()
     ][:12]
+    profile_phrases = _profile_phrase_set(style_profile)
     ranked = []
     for raw in candidates:
         text = re.sub(r"\s+", " ", str(raw or "")).strip().strip("\"'“”")
@@ -171,113 +272,173 @@ def style_rerank_candidates(
                 pass
         if not text:
             continue
-        score = 100
+        style_score = 50
+        scene_score = 50
+        risk_penalty = 0
+        hygiene_penalty = 0
         reasons = []
-        compact_latest = re.sub(r"\s+", "", str(latest_message or "").strip("。.!！?？~～"))
-        compact_candidate = re.sub(r"\s+", "", text.strip("。.!！?？~～"))
+        persona_reasons = []
+        scene_reasons = []
+        risk_reasons = []
+        hard_reject_reasons = []
+        compact_latest = _compact_reply_text(latest_message)
+        compact_candidate = _compact_reply_text(text)
         if compact_latest and compact_candidate == compact_latest:
-            score -= 70
+            hygiene_penalty += 90
             reasons.append("copied_current_message")
+            hard_reject_reasons.append("copied_current_message")
         if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
-            score -= 90
+            hygiene_penalty += 90
             reasons.append("invalid_text")
+            hard_reject_reasons.append("invalid_text")
+        length_delta, length_reason = _length_fit_score(text, target_length, target_max)
+        style_score += length_delta
+        if length_delta >= 0:
+            persona_reasons.append(length_reason)
+        else:
+            reasons.append(length_reason)
         if len(text) > target_max:
-            score -= min(60, len(text) - target_max)
+            excess = min(45, len(text) - target_max)
+            hygiene_penalty += excess
             reasons.append("too_long")
         if any(marker in text for marker in formal_markers):
-            score -= 35
+            style_score -= 24
             reasons.append("too_formal")
         if any(marker in text for marker in ai_markers):
-            score -= 45
+            style_score -= 34
             reasons.append("assistant_like")
+        if text.startswith(ai_flavor_prefixes) or re.search(r"^(好的|收到|明白)[，,].{2,}", text):
+            style_score -= 34
+            reasons.append("ai_flavor_prefix")
         if re.search(r"(^|\n)\s*(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+)", text):
-            score -= 25
+            hygiene_penalty += 42
             reasons.append("structured_answer")
+            hard_reject_reasons.append("structured_answer")
         if text.endswith(("。", "！")) and len(text) <= 12:
-            score -= 6
+            style_score -= 4
             reasons.append("over_punctuated_short")
+        phrase_hits = [
+            phrase for phrase in profile_phrases
+            if phrase and (phrase in compact_candidate or compact_candidate in phrase)
+        ][:3]
+        if phrase_hits:
+            style_score += min(16, 6 + len(phrase_hits) * 3)
+            persona_reasons.append("phrase_overlap:" + "/".join(phrase_hits))
+        elif len(compact_candidate) <= 4:
+            style_score += 5
+            persona_reasons.append("short_casual_shape")
+        if history_texts:
+            structure_match = max((_structural_similarity(text, target) for target in history_texts), default=0.0)
+            if structure_match >= 0.72:
+                style_score += 10
+                persona_reasons.append("structure_like_history")
+            elif structure_match >= 0.55:
+                style_score += 5
+                persona_reasons.append("structure_somewhat_like_history")
+        if _punctuation_signature(text).get("no_punct") and len(compact_candidate) <= 12:
+            style_score += 5
+            persona_reasons.append("chat_like_no_punct")
         if latest_intent.get("reality_state_query") and any(marker in text for marker in state_claim_markers):
-            score -= 42
+            risk_penalty += 50
             reasons.append("unsafe_owner_state")
+            risk_reasons.append("owner_state_claim_without_grounding")
         if (
             latest_intent.get("task_request")
             or latest_intent.get("reality_state_query")
             or _contains_any(latest_message, TASK_HINTS)
             or _contains_any(latest_message, ("弄完", "做完", "今天能", "今晚能"))
         ) and any(marker in text for marker in over_commit_markers):
-            score -= 34
+            risk_penalty += 36 + commitment_level * 8
             reasons.append("over_commit")
+            risk_reasons.append("action_or_progress_commitment")
         if credential_request and any(marker in text for marker in risky_share_markers):
-            score -= 90
+            risk_penalty += 90
             reasons.append("credential_share_risk")
+            risk_reasons.append("credential_share_risk")
+            hard_reject_reasons.append("credential_share_risk")
         if (
             latest_intent.get("help_request")
             or latest_intent.get("task_request")
             or _contains_any(latest_message, HELP_HINTS + TASK_HINTS)
         ) and text in generic_probe_replies:
-            score -= 16
+            scene_score -= 18
             reasons.append("too_generic_for_request")
         if latest_intent.get("emotional") and text in {"何意", "何意味"}:
-            score -= 12
+            scene_score -= 12
             reasons.append("too_generic_for_emotion")
         behavior = classify_reply_behavior(text, latest_message=latest_message)
+        if behavior.get("label") == "high_risk_grant":
+            risk_penalty += 90
+            reasons.append("high_risk_grant")
+            risk_reasons.extend(behavior.get("reasons") or [])
+            hard_reject_reasons.append("high_risk_grant")
         if latest_intent.get("game_invitation"):
             if behavior["label"] == "assistant_invite":
-                score -= 44
+                style_score -= 22
+                scene_score -= 14
+                risk_penalty += 24
                 reasons.append("assistant_like_game_invite")
             if behavior["label"] == "accept_commit":
-                score -= 70
+                scene_score -= 8
+                risk_penalty += 34
                 reasons.append("unknown_game_availability_commit")
+                risk_reasons.append("game_availability_commitment")
             if behavior["label"] in {"decline", "defer", "ask_third_party", "clarify"}:
-                score += 16
+                scene_score += 24
+                style_score += 4
                 reasons.append("safe_game_deflection")
+                scene_reasons.append("low_risk_game_social_reply")
             if behavior["label"] == "weak_probe":
-                score -= 18
+                scene_score -= 12
                 reasons.append("weak_game_probe")
             if text.endswith(("！", "!")):
-                score -= 12
+                style_score -= 10
                 reasons.append("over_excited_game_invite")
             if len(text) > 14:
-                score -= 18
+                style_score -= 14
                 reasons.append("too_long_for_game_invite")
+        elif commitment_level == 0:
+            scene_score += 4
+            scene_reasons.append("low_risk_social")
+        elif commitment_level == 2 and behavior.get("label") == "owner_state_commit":
+            risk_penalty += 18
+            risk_reasons.append("state_declaration_level2")
         if len(text) >= 3 and text in history_texts:
-            score -= 24
+            hygiene_penalty += 78
             reasons.append("copied_history_exact")
+            hard_reject_reasons.append("copied_history_exact")
         elif len(text) >= 6 and history_texts:
             similarity = max(
                 (_jaccard(_text_ngrams(text), _text_ngrams(target)) for target in history_texts),
                 default=0.0,
             )
             if similarity >= 0.82:
-                score -= 14
+                hygiene_penalty += 35
                 reasons.append("copied_history_near")
+                hard_reject_reasons.append("copied_history_near")
         correction_delta, correction_reasons = candidate_correction_delta(text, correction_items)
         if correction_delta:
-            score += correction_delta
+            style_score += correction_delta
             reasons.extend(correction_reasons)
-        if 2 <= len(text) <= target_max:
-            score += 8
-            reasons.append("length_ok")
-        hard_reject = (
-            "assistant_like" in reasons
-            or "too_long" in reasons
-            or "structured_answer" in reasons
-            or "invalid_text" in reasons
-            or "unsafe_owner_state" in reasons
-            or "over_commit" in reasons
-            or "credential_share_risk" in reasons
-            or "copied_history_exact" in reasons
-            or "copied_history_near" in reasons
-            or "copied_current_message" in reasons
-            or "assistant_like_game_invite" in reasons
-            or "unknown_game_availability_commit" in reasons
-            or ("too_formal" in reasons and scene_label != "formal_or_worklike")
-        )
+        score = int(round(style_score * 0.52 + scene_score * 0.33 + 20 - risk_penalty - hygiene_penalty))
+        hard_reject = bool(hard_reject_reasons)
+        accepted = score >= 58 and not hard_reject
         ranked.append({
             "text": text,
             "score": score,
+            "style_score": int(round(style_score)),
+            "scene_score": int(round(scene_score)),
+            "risk_penalty": int(round(risk_penalty)),
+            "hygiene_penalty": int(round(hygiene_penalty)),
+            "commitment_risk_level": commitment_level,
+            "commitment_risk_label": commitment_label,
             "reasons": reasons,
-            "accepted": score >= 55 and not hard_reject,
+            "persona_reasons": persona_reasons,
+            "scene_reasons": scene_reasons,
+            "risk_reasons": risk_reasons,
+            "hard_reject_reasons": hard_reject_reasons,
+            "hard_reject": hard_reject,
+            "accepted": accepted,
             "behavior": behavior.get("label"),
             "behavior_safe": bool(behavior.get("safe_for_context")),
             "behavior_reasons": behavior.get("reasons") or [],

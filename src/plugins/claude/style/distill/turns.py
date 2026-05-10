@@ -20,6 +20,7 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
     task_request = _contains_any(normalized, TASK_HINTS)
     image_reference = _contains_any(normalized, IMAGE_HINTS)
     reality_state_query = _contains_any(normalized, REALITY_STATE_HINTS)
+    high_risk_request = _contains_any(normalized, HIGH_RISK_COMMITMENT_HINTS)
     is_question = bool(
         has_mark
         or has_question_hint
@@ -43,6 +44,28 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
     else:
         question_type = "statement"
 
+    commitment_reasons = []
+    if high_risk_request:
+        commitment_risk_level = 3
+        commitment_risk_label = "high_risk_action"
+        commitment_reasons.append("credential_finance_or_formal_commitment")
+    elif availability_query or reality_state_query:
+        commitment_risk_level = 2
+        commitment_risk_label = "state_declaration"
+        commitment_reasons.append("depends_on_owner_current_reality")
+    elif help_request or task_request or (invitation and not game_invitation) or (is_question and not game_invitation):
+        commitment_risk_level = 1
+        commitment_risk_label = "information_or_light_action"
+        commitment_reasons.append("may_need_context_or_light_followup")
+    else:
+        commitment_risk_level = 0
+        commitment_risk_label = "phatic_social"
+        commitment_reasons.append("low_risk_social_reply")
+    if game_invitation and not high_risk_request:
+        commitment_risk_level = 0
+        commitment_risk_label = "phatic_social"
+        commitment_reasons = ["game_invitation_as_social_probe"]
+
     return {
         "is_question": is_question,
         "question_type": question_type,
@@ -56,6 +79,10 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
         "game_term": has_game_term,
         "question_mark": has_mark,
         "question_hint": has_question_hint,
+        "high_risk_request": high_risk_request,
+        "commitment_risk_level": commitment_risk_level,
+        "commitment_risk_label": commitment_risk_label,
+        "commitment_risk_reasons": commitment_reasons,
     }
 
 def _features_for_text(text: str) -> Dict[str, Any]:

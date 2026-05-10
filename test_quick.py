@@ -60,6 +60,7 @@ from src.plugins.claude.style_profile import (
     clean_style_habits,
     format_generation_context_for_prompt,
     format_recent_dialogue_for_prompt,
+    format_style_draft_debug,
     format_style_profile,
     parse_chat_log_text,
     parse_style_command,
@@ -504,10 +505,11 @@ async def test_style_profile():
         assert "样例问题A" not in format_style_profile(imported_profile)
 
         prompt = build_style_system_prompt(loaded)
-        assert "回复草稿生成器" in prompt
+        assert "聊天代写器" in prompt
         assert "自然、短句、像我本人" in prompt
         assert "在的在的，刚看到，我来处理。" in prompt
         assert "不要直接替主人回答" in prompt
+        assert "语用外壳" in prompt
         assert "不要连续重复" in prompt
 
         recent_prompt = format_recent_dialogue_for_prompt([
@@ -871,6 +873,9 @@ async def test_style_distill():
         )
         assert "相似真实样本" in raw_retrieval_prompt
         assert "样例回复A" in raw_retrieval_prompt
+        assert detect_message_intent("有无瓦")["commitment_risk_level"] == 0
+        assert detect_message_intent("你现在忙吗")["commitment_risk_level"] == 2
+        assert detect_message_intent("把你账号密码发我")["commitment_risk_level"] == 3
         assert infer_scene_label(
             "在不在",
             chat_type="private",
@@ -901,17 +906,30 @@ async def test_style_distill():
         game_ranked = style_rerank_candidates(
             ["有的呀！想一起开黑吗？", "有无瓦", "可瓦", "打瓦", "暂无", "可以问问c0", "何意", "咋了"],
             scene_label="private_short_casual",
+            target_length=6,
+            style_profile={"common_phrases": ["何意", "暂无", "可以问问c0"]},
             latest_message="有无瓦",
         )
         assert game_ranked[0]["text"] in {"暂无", "可以问问c0", "何意"}
+        assert "style_score" in game_ranked[0]
+        assert "risk_penalty" in game_ranked[0]
+        assert game_ranked[0]["commitment_risk_level"] == 0
         assert classify_reply_behavior("在打", latest_message="有无瓦")["label"] == "accept_commit"
         assert not classify_reply_behavior("在打", latest_message="有无瓦")["safe_for_context"]
         assert classify_reply_behavior("可以问问c0", latest_message="有无瓦")["label"] == "ask_third_party"
+        assert classify_reply_behavior("发你", latest_message="把你账号密码发我")["label"] == "high_risk_grant"
         assert any(item["text"] == "有的呀！想一起开黑吗？" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "有无瓦" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "可瓦" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "打瓦" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "咋了" and item["score"] < 100 for item in game_ranked)
+        draft_debug = format_style_draft_debug({
+            "selection_reason": "accepted_candidate",
+            "call": {"chat_type": "private", "target_id_present": True, "recent_dialogue_count": 0, "include_raw_fewshot": True},
+            "ranked_candidates": game_ranked,
+        })
+        assert "候选决策矩阵" in draft_debug
+        assert "style=" in draft_debug and "scene=" in draft_debug and "risk=-" in draft_debug
         task_ranked = style_rerank_candidates(
             ["快了", "难说", "我看看"],
             scene_label="private_short_casual",
