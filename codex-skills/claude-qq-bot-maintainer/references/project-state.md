@@ -205,6 +205,15 @@ Still planned:
 ### Stage 7: Controlled Agent Refactor
 
 - The old `AGENT_MODE` runtime path has been removed. Its historical prototype is archived at `src/plugins/claude/legacy/agent.py` for reference only.
-- Build any future agent behavior as a controlled tool loop.
-- Tools should have schemas, permission levels, confirmation rules, and execution logs.
-- Default high-risk outputs should be drafts or read-only.
+- Added `src/plugins/claude/controlled_agent.py`.
+- Added owner-only/private-only `/agent` commands for tool catalog, plans, review drafts, explicit execution, and recent draft listing.
+- Tools have schema-like specs: name, usage, permission, risk, and confirmation requirement.
+- High-risk tools use the existing `/确认` flow and audit to `data/action_logs.jsonl`.
+- Current tool set is intentionally narrow: time, calc, todo list/add/done, memory query, status, clear session.
+
+### Stage 8: Controlled Draft and Review
+
+- `/agent 计划 <任务>` and `/agent 草稿 <任务>` create local drafts in `data/agent_drafts.json`.
+- `/agent 采纳 <id>` and `/agent 拒绝 <id>` mark review outcomes without executing hidden work.
+- `/agent 执行计划 <id>` executes only explicit reviewed plans; high-risk steps still require `/确认`.
+- Old owner-style auto-send remains retired.

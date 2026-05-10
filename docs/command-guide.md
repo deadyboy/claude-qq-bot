@@ -678,6 +678,58 @@ data/style_profiles/import_inbox/
 - 影子审核只对信任用户私聊生效；群聊和非信任用户不会进入该模式。
 - 旧 `/代聊` 自动回复已退役；真实联系人观察统一使用 `/教学 开`。
 
+### `/agent`
+
+Stage 7/8 的受控 Agent 入口。它不恢复旧 `AGENT_MODE`，只在主人私聊中使用；先生成计划或草稿，再按权限和确认规则执行受控工具。
+
+权限：Owner-only、Private-only。
+
+用法：
+
+```text
+/agent
+/agent 工具
+/agent 状态
+/agent 计划 <任务>
+/agent 草稿 <任务>
+/agent 最近
+/agent 执行 <工具> <参数>
+/agent 执行计划 <草稿ID>
+/agent 采纳 <草稿ID>
+/agent 拒绝 <草稿ID>
+```
+
+当前受控工具：
+
+```text
+time
+calc
+todo_list
+todo_add
+todo_done
+memory_query
+status
+clear_session
+```
+
+示例：
+
+```text
+/agent 计划 计算 1 + 2 * 3
+/agent 执行 calc 1 + 2 * 3
+/agent 计划 待办 添加 明天整理导出记录
+/agent 执行计划 <id>
+/agent 执行 clear_session
+```
+
+说明：
+
+- `/agent 计划` 和 `/agent 草稿` 只生成审核草稿，保存到 `data/agent_drafts.json`。
+- `/agent 执行计划 <id>` 会执行草稿中的低风险步骤；高风险步骤会返回 `/确认 <id>`。
+- `/agent 执行 clear_session` 这类高风险工具不会立即执行，会进入现有确认和审计链路。
+- 执行审计写入 `data/action_logs.jsonl`，不会使用旧 Agent Engine 的监督日志。
+- 当前 `/agent` 不做联网、不写文件、不运行 shell，不和 Stage 5B 蒸馏链路耦合。
+
 ## Legacy Agent Mode
 
 旧 Agent Mode 已归档，当前运行时代码不再包含 `AGENT_MODE` 开关，也不再注册 `/tasks`。
@@ -698,6 +750,7 @@ data/style_profiles/import_inbox/
 - Owner 权限检查。
 - 风格画像、风格草稿、聊天记录导入、本地蒸馏、Stage 5B 生成闭环 v1、教学反馈闭环和 raw few-shot 授权模式。
 - 已退役旧自动代聊发送入口，保留教学审核闭环。
+- Stage 7/8 受控 Agent：工具目录、计划草稿、审核队列、确认执行和审计日志。
 - 信任名单权限基座、权限等级、待确认操作、操作日志。
 - Git 跟踪、开发日志和 Codex 维护 skill。
 
@@ -728,19 +781,20 @@ data/style_profiles/import_inbox/
 
 ### Stage 7: 受控 Agent Mode
 
-计划：
+已完成第一版：
 
 - 旧 `AGENT_MODE` 已移除；未来只做受控工具循环。
-- 工具 schema 化。
-- 每个工具接入现有权限等级、确认规则、执行日志。
-- 默认高风险输出走草稿或只读。
+- `src/plugins/claude/controlled_agent.py` 定义受控工具 schema、权限、风险等级和确认要求。
+- `/agent 执行 <工具>` 可执行低风险工具；高风险工具进入 `/确认`。
+- 执行结果写入 `data/action_logs.jsonl`。
+- 当前工具范围故意较小：时间、计算、待办、记忆查询、状态、清空会话。
 
 ### Stage 8: 受控草稿/审核试验
 
-前置条件：
+已完成第一版：
 
-- Stage 5B 评估体系可用。
-- Stage 6B 权限和确认机制可用。
-- Stage 7 受控工具循环可用。
-
-初始策略保持信任名单内、私聊、低风险场景先草稿和教学审核。自动发送入口已经退役，除非未来重新做独立风险评估和单独实现，不从旧 `/代聊` 链路恢复。
+- `/agent 计划 <任务>` 和 `/agent 草稿 <任务>` 生成可审核计划，不直接执行。
+- 草稿保存在 `data/agent_drafts.json`，可用 `/agent 最近` 查看。
+- `/agent 采纳 <id>` 和 `/agent 拒绝 <id>` 只标记审核结果。
+- `/agent 执行计划 <id>` 才进入执行；高风险步骤仍走 `/确认`。
+- 自动发送入口继续保持退役，不从旧 `/代聊` 链路恢复。

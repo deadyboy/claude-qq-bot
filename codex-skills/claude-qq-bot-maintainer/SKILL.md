@@ -83,6 +83,7 @@ Implemented stable commands include:
 - `/用我的风格回复：...` generates an owner-style draft only; when Stage 5B outputs exist, it uses no-raw-text retrieval/relationship/scene metadata as generation context.
 - `/风格 调试 ...` is owner-only/private-only and may show visible raw historical snippets for debugging. Keep credential-like content skipped and do not persist raw debug snippets to profile/index/log files.
 - `/教学 开/关/最近/出题/纠正`: teaching review loop for trusted private users; it sends candidates to the owner only and never auto-sends to contacts.
+- `/agent`: owner-only/private-only controlled Agent entry for tool catalog, plans, review drafts, explicit execution, and confirmation-gated high-risk actions.
 - `/代聊` and `/风格 自动回复` are retired compatibility commands; they only return a retirement notice and must not create confirmation actions.
 - `/model`, `/clear`, `/help`.
 
@@ -96,7 +97,7 @@ Keep the architecture separated:
 - `style_profile`: owner speaking-style profile and draft generation, stored under `data/style_profiles/`.
 - `style_skill`: local 36.skill runtime persona, relationship profiles, memory patterns, and active correction layer.
 - `safe_tools`: low-risk commands that do not require agentic autonomy.
-- Future controlled agent mode: build later from schema-based tools, permissions, confirmations, and logs. Do not revive old `AGENT_MODE` or import `legacy/agent.py` into runtime.
+- `controlled_agent`: Stage 7/8 command-driven tool plans, review drafts, permission checks, confirmation, and audit logging. Do not revive old `AGENT_MODE` or import `legacy/agent.py` into runtime.
 
 ## Subagent Use
 

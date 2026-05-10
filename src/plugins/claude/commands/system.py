@@ -104,6 +104,7 @@ async def handle_basic_status(
         "- 自动代聊发送：已退役",
         f"- 教学影子审核：{'开' if is_style_teaching_enabled() else '关'}",
         f"- 真实原句 few-shot：{'开' if is_style_raw_fewshot_enabled() else '关'}",
+        "- 受控 Agent：已启用（主人私聊 /agent）",
         f"- 你的资料：{len(profile.get('items') or [])} 条",
         f"- 最近错误：{get_latest_error_header()}",
     ])
@@ -165,6 +166,7 @@ async def handle_help_basic(
         "- /风格 查看/导入/导入文件/设置：主人维护风格画像",
         "- /用我的风格回复：...：主人生成风格草稿",
         "- /教学 开/关：主人开启影子审核并用 /采纳、/评分、/改成 记录反馈",
+        "- /agent：主人私聊使用受控工具、计划草稿和审核执行",
     ])
     await send_qq_text(bot, event, msg)
 

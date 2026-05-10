@@ -282,6 +282,31 @@ def is_tools_command(event: MessageEvent) -> bool:
     return _is_exact_command(event, {"/tools", "/工具", "工具", "工具列表"})
 
 
+def is_agent_command(event: MessageEvent) -> bool:
+    text = get_plain_text(event)
+    lowered = text.lower()
+    return (
+        lowered == "/agent"
+        or lowered.startswith("/agent ")
+        or text == "/智能体"
+        or text.startswith("/智能体 ")
+        or text.startswith("/智能体：")
+        or text.startswith("/智能体:")
+        or text == "/受控"
+        or text.startswith("/受控 ")
+        or text.startswith("/受控：")
+        or text.startswith("/受控:")
+        or text == "智能体"
+        or text.startswith("智能体 ")
+        or text.startswith("智能体：")
+        or text.startswith("智能体:")
+        or text == "受控"
+        or text.startswith("受控 ")
+        or text.startswith("受控：")
+        or text.startswith("受控:")
+    )
+
+
 def is_memory_toggle_command(event: MessageEvent) -> bool:
     text = get_plain_text(event)
     lowered = text.lower()
@@ -915,6 +940,72 @@ async def execute_pending_action(action: dict) -> str:
             return "清空失败：缺少会话 ID。"
         await chat_session_manager.clear_session(session_id)
         return "会话历史已清空。"
+
+    if action_type == "controlled_agent_tool":
+        from .controlled_agent import (
+            ControlledAgentContext,
+            execute_controlled_tool,
+            format_execution_result,
+        )
+
+        await ensure_profile_memory_ready()
+        actor_id = str(action.get("created_by") or "")
+        session_id = str(payload.get("session_id") or f"private_{actor_id}")
+        profile = await profile_memory.get_user_profile(actor_id)
+        context = ControlledAgentContext(
+            actor_id=actor_id,
+            session_id=session_id,
+            chat_type=str(payload.get("chat_type") or "private"),
+            is_owner=True,
+        )
+        result = await execute_controlled_tool(
+            str(payload.get("tool_name") or ""),
+            str(payload.get("tool_payload") or ""),
+            context,
+            todo_store=todo_store,
+            user_profile=profile,
+            confirmed=True,
+            session_clearer=chat_session_manager.clear_session,
+        )
+        return format_execution_result(result)
+
+    if action_type == "controlled_agent_plan":
+        from .controlled_agent import (
+            ControlledAgentContext,
+            agent_draft_store,
+            execute_agent_plan,
+            format_plan_execution_results,
+            serialize_execution_results,
+        )
+
+        actor_id = str(action.get("created_by") or "")
+        draft_id = str(payload.get("draft_id") or "")
+        draft = agent_draft_store.get(draft_id, actor_id)
+        if not draft:
+            return "执行失败：没有找到这个受控 Agent 草稿。"
+        await ensure_profile_memory_ready()
+        profile = await profile_memory.get_user_profile(actor_id)
+        context = ControlledAgentContext(
+            actor_id=actor_id,
+            session_id=str(draft.get("session_id") or f"private_{actor_id}"),
+            chat_type=str(draft.get("chat_type") or "private"),
+            is_owner=True,
+        )
+        results, _ = await execute_agent_plan(
+            draft,
+            context,
+            todo_store=todo_store,
+            user_profile=profile,
+            confirmed=True,
+            session_clearer=chat_session_manager.clear_session,
+        )
+        agent_draft_store.update_status(
+            draft_id,
+            actor_id,
+            "executed",
+            serialize_execution_results(results),
+        )
+        return format_plan_execution_results(draft_id, results)
 
     return f"未知待确认操作：{action_type}"
 

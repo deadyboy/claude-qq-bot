@@ -18,6 +18,7 @@ src/plugins/claude/
 ├── memory_core.py           # sessions, long-term memory, key facts, tasks
 ├── permissions.py           # owner/trust-list checks
 ├── confirmation.py          # pending confirmation and audit logs
+├── controlled_agent.py      # Stage 7/8 controlled tools, plans, review drafts
 ├── style_profile.py         # owner style profile and drafts
 ├── style_skill.py           # 36.skill runtime layer and corrections
 ├── style/distill/           # Stage 5B QCE distillation/retrieval/generation modules
@@ -38,6 +39,7 @@ src/plugins/claude/
 - Stage 5B distillation split into `src/plugins/claude/style/distill/`.
 - Session memory consolidated into `memory_core.py`.
 - Old `AGENT_MODE`, `/tasks`, and runtime `agent.py` path removed.
+- Stage 7/8 controlled Agent added: `/agent` owner-private commands, tool schema, draft review queue, confirmation-gated execution, and audit logs.
 
 ## Storage Model
 
@@ -48,6 +50,7 @@ src/plugins/claude/
 - Todos: `data/todos.json`
 - Permissions: `data/permissions.json`
 - Pending confirmations and audit logs: `data/pending_actions.json`, `data/action_logs.jsonl`
+- Controlled Agent drafts: `data/agent_drafts.json`
 - Owner style data: `data/style_profiles/`
 - Bot persona: `config/persona.json`
 
@@ -63,9 +66,21 @@ There is still no `bot_<botQQ>` namespace. Add that before running multiple bot 
 
 ### Stage 7 Controlled Agent
 
+First version complete:
+
 - Do not revive old `AGENT_MODE`.
-- Build future agent behavior around schema tools, permissions, confirmations, and audit logs.
-- Keep high-risk outputs as drafts or owner-confirmed actions.
+- `/agent 工具`, `/agent 计划`, `/agent 草稿`, `/agent 执行`, `/agent 执行计划`, `/agent 采纳`, `/agent 拒绝`.
+- Tools are schema-like entries with permission, risk, usage, and confirmation flags.
+- High-risk execution is confirmation-gated and audited.
+
+### Stage 8 Controlled Review
+
+First version complete:
+
+- Plans/drafts are saved locally for review.
+- Drafts can be accepted/rejected without execution.
+- Execution is explicit and still respects confirmation rules.
+- No automatic owner-style sending was reintroduced.
 
 ## Validation
 

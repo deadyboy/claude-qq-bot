@@ -24,6 +24,18 @@ from src.plugins.claude.confirmation import (
     ConfirmationStore,
     format_pending_actions,
 )
+from src.plugins.claude.controlled_agent import (
+    ControlledAgentContext,
+    ControlledAgentDraftStore,
+    build_controlled_agent_plan,
+    execute_agent_plan,
+    execute_controlled_tool,
+    format_agent_plan,
+    format_recent_agent_drafts,
+    format_tool_catalog,
+    parse_agent_command,
+    split_tool_payload,
+)
 from src.plugins.claude.safe_tools import (
     TodoStore,
     format_tool_list,
@@ -55,6 +67,8 @@ from src.plugins.claude.style_profile import (
     parse_style_set_payload,
 )
 from src.plugins.claude.style_distill import (
+    build_embedding_metadata,
+    build_embedding_text,
     build_retrieval_first_prompt,
     build_style_generation_context,
     detect_message_intent,
@@ -88,7 +102,7 @@ RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/9] 测试短期记忆...")
+    print("[1/10] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -110,7 +124,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/9] 测试关键事实...")
+    print("[2/10] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -152,7 +166,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/9] 测试自动记忆规则...")
+    print("[3/10] 测试自动记忆规则...")
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
@@ -179,7 +193,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/9] 测试低风险工具...")
+    print("[4/10] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -220,7 +234,7 @@ async def test_safe_tools():
 
 async def test_permissions():
     """测试 owner 权限辅助函数。"""
-    print("[5/9] 测试权限辅助函数...")
+    print("[5/10] 测试权限辅助函数...")
 
     owner_ids = parse_owner_ids("123, 456；789  100")
     assert owner_ids == {"123", "456", "789", "100"}
@@ -299,9 +313,83 @@ async def test_permissions():
     print("      通过")
     return True
 
+async def test_controlled_agent():
+    """测试 Stage 7/8 受控 Agent 计划、工具、草稿和确认门。"""
+    print("[6/10] 测试受控 Agent...")
+
+    context = ControlledAgentContext(
+        actor_id=f"agent_user_{RUN_ID}",
+        session_id=f"private_agent_user_{RUN_ID}",
+        chat_type="private",
+        is_owner=True,
+    )
+    todo_path = Path("data") / f"agent_todos_test_{RUN_ID}.json"
+    draft_path = Path("data") / f"agent_drafts_test_{RUN_ID}.json"
+    todo = TodoStore(todo_path)
+    drafts = ControlledAgentDraftStore(draft_path)
+
+    try:
+        assert parse_agent_command("/agent 工具") == ("tools", "")
+        assert parse_agent_command("/agent 计划 计算 1 + 2") == ("plan", "计算 1 + 2")
+        assert split_tool_payload("calc 1 + 2") == ("calc", "1 + 2")
+        assert "clear_session" in format_tool_catalog()
+
+        plan = build_controlled_agent_plan("计算 1 + 2 * 3", context)
+        assert plan["steps"][0]["tool_name"] == "calc"
+        assert plan["steps"][0]["requires_confirmation"] is False
+
+        draft = drafts.create(context.actor_id, plan)
+        assert draft["id"] in format_agent_plan(draft)
+        assert draft["id"] in format_recent_agent_drafts(drafts.list_recent(context.actor_id))
+
+        result = await execute_controlled_tool(
+            "calc",
+            "1 + 2 * 3",
+            context,
+            todo_store=todo,
+            user_profile={"items": [{"predicate": "偏好", "object": "喜欢详细步骤"}]},
+        )
+        assert result.ok and " = 7" in result.output
+
+        todo_result = await execute_controlled_tool("todo_add", "写测试", context, todo_store=todo)
+        assert todo_result.ok
+        list_result = await execute_controlled_tool("todo_list", "", context, todo_store=todo)
+        assert "写测试" in list_result.output
+
+        memory_result = await execute_controlled_tool(
+            "memory_query",
+            "详细",
+            context,
+            user_profile={"items": [{"predicate": "偏好", "object": "喜欢详细步骤"}]},
+        )
+        assert memory_result.ok and "详细" in memory_result.output
+
+        high_plan = build_controlled_agent_plan("清空会话", context)
+        results, needs_confirmation = await execute_agent_plan(high_plan, context, todo_store=todo)
+        assert needs_confirmation is True
+        assert results[0].requires_confirmation is True
+
+        denied = await execute_controlled_tool(
+            "time",
+            "",
+            ControlledAgentContext("normal", "private_normal", "private", is_owner=False),
+        )
+        assert not denied.ok and denied.status == "permission_denied"
+
+        updated = drafts.update_status(draft["id"], context.actor_id, "accepted")
+        assert updated and updated["status"] == "accepted"
+    finally:
+        todo.clear_user(context.actor_id)
+        drafts.clear_for_tests()
+        if todo_path.exists():
+            todo_path.unlink()
+
+    print("      通过")
+    return True
+
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
-    print("[6/9] 测试风格画像...")
+    print("[7/10] 测试风格画像...")
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
     try:
@@ -441,7 +529,7 @@ async def test_style_profile():
 
 async def test_style_distill():
     """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
-    print("[7/9] 测试 Stage 5B 离线蒸馏...")
+    print("[8/10] 测试 Stage 5B 离线蒸馏...")
 
     root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
     input_dir = root / "input"
@@ -804,6 +892,34 @@ async def test_style_distill():
         assert "相似历史样本索引摘要" in prompt
         assert "关系/来源画像摘要" in prompt
         assert "场景画像摘要" in prompt
+
+        embedding_pair = {
+            "pair_id": "pair_embedding_test",
+            "source_file_id": "source_embedding_test",
+            "relationship_id": "private_2000000002",
+            "chat_type": "private",
+            "scene_label": "private_short_casual",
+            "score": 88,
+            "length_bucket": "short",
+            "taxonomy": {
+                "scope": "global_style",
+                "grounding_type": "text_grounded",
+                "learning_value": "high",
+                "target_char_length": 4,
+                "context_turn_count": 1,
+            },
+            "context": [{"role": "other", "text": "有无瓦"}],
+            "target": {"text": "打啊", "char_length": 2},
+        }
+        embedding_text = build_embedding_text(embedding_pair)
+        embedding_metadata = build_embedding_metadata(embedding_pair)
+        metadata_text = json.dumps(embedding_metadata, ensure_ascii=False)
+        assert "有无瓦" in embedding_text
+        assert "打啊" not in embedding_text
+        assert "有无瓦" not in metadata_text
+        assert "打啊" not in metadata_text
+        assert embedding_metadata["pair_id"] == "pair_embedding_test"
+        assert embedding_metadata["embedding_text_chars"] == len(embedding_text)
     finally:
         store.delete_for_tests()
         if root.exists():
@@ -816,7 +932,7 @@ async def test_style_distill():
 
 async def test_style_teaching():
     """测试风格教学反馈存储"""
-    print("[8/9] 测试风格教学反馈...")
+    print("[9/10] 测试风格教学反馈...")
     root = Path("data") / f"test_style_teaching_{RUN_ID}"
     skill_root = root / "36_skill"
     store = TeachingReviewStore(
@@ -965,7 +1081,7 @@ async def test_style_teaching():
 
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[9/9] 测试统一记忆管理器...")
+    print("[10/10] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -1060,6 +1176,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("权限辅助", False))
+
+    try:
+        results.append(("受控 Agent", await test_controlled_agent()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("受控 Agent", False))
 
     try:
         results.append(("风格画像", await test_style_profile()))

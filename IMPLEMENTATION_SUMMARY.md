@@ -18,6 +18,7 @@ Current runtime is no longer dual-mode. The old Agent Engine prototype has been 
 | Safe tools | `src/plugins/claude/safe_tools.py` | Time, calculation, todos, profile search, latest errors |
 | Permissions | `src/plugins/claude/permissions.py` | Owner and trust-list checks |
 | Confirmation | `src/plugins/claude/confirmation.py` | Pending actions and audit log |
+| Controlled Agent | `src/plugins/claude/controlled_agent.py` | Stage 7/8 tool plans, review drafts, confirmation-gated execution |
 | Style profile | `src/plugins/claude/style_profile.py` | Owner style commands and draft generation |
 | 36.skill runtime | `src/plugins/claude/style_skill.py` | Persona, relationship profiles, corrections |
 | Stage 5B distill | `src/plugins/claude/style/distill/` | QCE parsing, turns, phrases, taxonomy, retrieval, generation, reports |
@@ -34,6 +35,7 @@ Current runtime is no longer dual-mode. The old Agent Engine prototype has been 
 - Time, safe calculation, todos, and profile search.
 - Owner trust list and confirmation/audit flow.
 - Style profile import, QCE distillation, retrieval-first drafts, teaching review, and correction feedback.
+- `/agent` owner-private controlled tools, plans, review drafts, and explicit execution.
 - Retired `/代聊` and `/风格 自动回复` compatibility notices.
 
 ## Removed Runtime Paths
