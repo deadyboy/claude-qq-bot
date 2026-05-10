@@ -74,6 +74,7 @@ from src.plugins.claude.style.distill.embedding import (
 from src.plugins.claude.style_distill import (
     build_retrieval_first_prompt,
     build_style_generation_context,
+    classify_reply_behavior,
     detect_message_intent,
     find_source_for_target,
     format_style_debug_report,
@@ -903,6 +904,9 @@ async def test_style_distill():
             latest_message="有无瓦",
         )
         assert game_ranked[0]["text"] in {"暂无", "可以问问c0", "何意"}
+        assert classify_reply_behavior("在打", latest_message="有无瓦")["label"] == "accept_commit"
+        assert not classify_reply_behavior("在打", latest_message="有无瓦")["safe_for_context"]
+        assert classify_reply_behavior("可以问问c0", latest_message="有无瓦")["label"] == "ask_third_party"
         assert any(item["text"] == "有的呀！想一起开黑吗？" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "有无瓦" and not item["accepted"] for item in game_ranked)
         assert any(item["text"] == "可瓦" and not item["accepted"] for item in game_ranked)

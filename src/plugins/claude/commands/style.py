@@ -28,11 +28,13 @@ async def handle_style_draft(
         return
 
     try:
-        draft = await generate_style_draft(
+        result = await generate_owner_private_style_draft(
+            event,
             payload,
-            actor_id=event.user_id,
-            scope="private",
+            scope="private_manual_draft",
+            record_dialogue=False,
         )
+        draft = str(result.get("draft") or "")
         draft_text = format_reply(draft)
         review = teaching_store.create_review(
             message=payload,
@@ -46,6 +48,7 @@ async def handle_style_draft(
         response = (
             f"草稿 #{review.get('id')}：\n"
             f"{draft_text}\n\n"
+            f"{format_style_draft_debug(result)}\n\n"
             f"可反馈：/评分 {review.get('id')} 1-5 原因；/改成 {review.get('id')} 你的正确回复"
         )
         for part in split_qq_msg(response):

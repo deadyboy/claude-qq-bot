@@ -56,6 +56,66 @@ def build_retrieval_first_prompt(
     lines.append(f"生成 {count} 条候选，彼此要有差异，但都保持口语、自然、短。")
     return "\n".join(lines)
 
+def classify_reply_behavior(text: str, *, latest_message: str = "") -> Dict[str, Any]:
+    """Classify what a candidate is doing, separate from surface wording."""
+    latest_intent = detect_message_intent(latest_message) if latest_message else {}
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip("\"'“”")
+    compact = re.sub(r"\s+", "", cleaned.strip("。.!！?？~～"))
+    result: Dict[str, Any] = {
+        "label": "neutral",
+        "safe_for_context": True,
+        "reasons": [],
+    }
+    if not cleaned:
+        return {"label": "empty", "safe_for_context": False, "reasons": ["empty"]}
+
+    if latest_intent.get("game_invitation"):
+        assistant_invite = (
+            "有的呀", "有的啊", "当然", "可以呀", "可以啊", "想一起", "一起开黑",
+            "来开黑", "开黑吗", "一起玩吗", "玩吗？", "玩吗?",
+        )
+        accept_commit = (
+            "有", "有啊", "有的", "打", "打瓦", "可瓦", "可以", "能打",
+            "来", "我来", "上号", "能瓦", "在打", "正在打", "打着", "上了",
+        )
+        if any(marker in cleaned for marker in assistant_invite):
+            result.update({"label": "assistant_invite", "safe_for_context": False})
+            result["reasons"].append("assistant_style_invite")
+        elif compact in accept_commit or (
+            compact.startswith(("有", "打", "可瓦", "上号", "在打", "正在"))
+            and not compact.startswith(("暂无", "无", "不", "等", "问", "何"))
+            and "问问" not in compact
+        ):
+            result.update({"label": "accept_commit", "safe_for_context": False})
+            result["reasons"].append("unknown_owner_game_availability")
+        elif compact.startswith(("无", "不打", "不玩", "没有", "暂无", "暂不")):
+            result["label"] = "decline"
+            result["reasons"].append("safe_game_decline")
+        elif compact.startswith(("等", "等等")):
+            result["label"] = "defer"
+            result["reasons"].append("safe_game_defer")
+        elif "问问" in compact or compact.startswith(("叫", "喊")):
+            result["label"] = "ask_third_party"
+            result["reasons"].append("safe_game_third_party")
+        elif compact in {"何意", "何意味", "什么意思"}:
+            result["label"] = "clarify"
+            result["reasons"].append("safe_game_clarify")
+        elif compact in {"咋了", "咋说", "啥事", "干嘛"}:
+            result["label"] = "weak_probe"
+            result["reasons"].append("weak_game_probe")
+        return result
+
+    if latest_intent.get("availability_query") or latest_intent.get("reality_state_query"):
+        owner_state_claims = (
+            "不忙", "有空", "在家", "在宿舍", "在学校", "刚醒", "刚起",
+            "已经到了", "快到了", "做完了", "弄完了", "搞完了", "在呢",
+            "在的", "我在", "人在",
+        )
+        if any(marker in cleaned for marker in owner_state_claims):
+            result.update({"label": "owner_state_commit", "safe_for_context": False})
+            result["reasons"].append("unknown_owner_reality_state")
+    return result
+
 def style_rerank_candidates(
     candidates: Sequence[str],
     *,
@@ -94,19 +154,6 @@ def style_rerank_candidates(
         "喏", "直接给", "你登吧",
     )
     generic_probe_replies = {"何意", "何意味", "咋了", "咋滴", "嗯？", "啥"}
-    game_invitation_markers = (
-        "有的呀", "有的啊", "当然", "可以呀", "可以啊", "想一起", "一起开黑",
-        "来开黑", "开黑吗", "一起玩吗", "玩吗？", "玩吗?",
-    )
-    game_commit_replies = {
-        "有", "有啊", "有的", "打", "打瓦", "可瓦", "可以", "能打",
-        "来", "我来", "上号", "能瓦",
-    }
-    game_safe_replies = {
-        "无", "没有", "不打", "暂无", "暂不", "等会", "等一会", "等下", "等等",
-        "可以问问", "问问", "何意", "何意味",
-    }
-    game_weak_probe_replies = {"咋了", "咋说", "啥事", "干嘛"}
     history_texts = [
         re.sub(r"\s+", " ", str(item or "")).strip()
         for item in (historical_targets or [])
@@ -173,25 +220,18 @@ def style_rerank_candidates(
         if latest_intent.get("emotional") and text in {"何意", "何意味"}:
             score -= 12
             reasons.append("too_generic_for_emotion")
+        behavior = classify_reply_behavior(text, latest_message=latest_message)
         if latest_intent.get("game_invitation"):
-            if any(marker in text for marker in game_invitation_markers):
+            if behavior["label"] == "assistant_invite":
                 score -= 44
                 reasons.append("assistant_like_game_invite")
-            compact_text = compact_candidate
-            if compact_text in game_commit_replies:
-                score -= 52
+            if behavior["label"] == "accept_commit":
+                score -= 70
                 reasons.append("unknown_game_availability_commit")
-            if (
-                compact_text.startswith(("有", "打", "可瓦", "上号"))
-                and not compact_text.startswith(("暂无", "无", "等", "问", "何", "咋"))
-                and "问问" not in compact_text
-            ):
-                score -= 32
-                reasons.append("unknown_game_availability_commit")
-            if compact_text in game_safe_replies or "可以问问" in compact_text:
+            if behavior["label"] in {"decline", "defer", "ask_third_party", "clarify"}:
                 score += 16
                 reasons.append("safe_game_deflection")
-            if compact_text in game_weak_probe_replies:
+            if behavior["label"] == "weak_probe":
                 score -= 18
                 reasons.append("weak_game_probe")
             if text.endswith(("！", "!")):
@@ -233,7 +273,15 @@ def style_rerank_candidates(
             or "unknown_game_availability_commit" in reasons
             or ("too_formal" in reasons and scene_label != "formal_or_worklike")
         )
-        ranked.append({"text": text, "score": score, "reasons": reasons, "accepted": score >= 55 and not hard_reject})
+        ranked.append({
+            "text": text,
+            "score": score,
+            "reasons": reasons,
+            "accepted": score >= 55 and not hard_reject,
+            "behavior": behavior.get("label"),
+            "behavior_safe": bool(behavior.get("safe_for_context")),
+            "behavior_reasons": behavior.get("reasons") or [],
+        })
     ranked.sort(key=lambda item: (-int(item["score"]), len(item["text"]), item["text"]))
     return ranked
 

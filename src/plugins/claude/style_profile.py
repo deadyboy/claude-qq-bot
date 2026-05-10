@@ -1253,11 +1253,35 @@ async def generate_style_draft(
     scope: str = "private",
     recent_dialogue: List[Dict[str, Any]] | None = None,
 ) -> str:
+    result = await generate_style_draft_result(
+        message,
+        store,
+        include_raw_fewshot=include_raw_fewshot,
+        chat_type=chat_type,
+        target_id=target_id,
+        actor_id=actor_id,
+        scope=scope,
+        recent_dialogue=recent_dialogue,
+    )
+    return str(result.get("draft") or "")
+
+
+async def generate_style_draft_result(
+    message: str,
+    store: StyleProfileStore = style_store,
+    *,
+    include_raw_fewshot: bool | None = None,
+    chat_type: str | None = None,
+    target_id: str | int | None = None,
+    actor_id: str | int | None = None,
+    scope: str = "private",
+    recent_dialogue: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     target = message.strip()
     if not target:
-        return "用法：/用我的风格回复：<对方消息>"
+        return {"ok": False, "draft": "用法：/用我的风格回复：<对方消息>", "message": "empty_message"}
     if len(target) > 1000:
-        return "对方消息太长。v1 先支持 1000 字以内的单条草稿。"
+        return {"ok": False, "draft": "对方消息太长。v1 先支持 1000 字以内的单条草稿。", "message": "message_too_long"}
 
     profile = store.load()
     generation_context = None
@@ -1324,13 +1348,64 @@ async def generate_style_draft(
         historical_targets=historical_targets,
         latest_message=target,
     )
+    selected = None
+    selection_reason = "accepted_candidate"
     for item in ranked:
         if item.get("accepted"):
-            return str(item.get("text") or "").strip()
-    if _requires_safe_fallback(generation_context):
-        return _fallback_style_draft(target, generation_context)
-    if ranked:
+            selected = str(item.get("text") or "").strip()
+            selection_reason = "accepted_candidate"
+            break
+    if selected is None and _requires_safe_fallback(generation_context):
+        selected = _fallback_style_draft(target, generation_context)
+        selection_reason = "safe_fallback"
+    if selected is None and ranked:
         best = str(ranked[0].get("text") or "").strip()
         if best and int(ranked[0].get("score") or 0) >= 40:
-            return best
-    return _fallback_style_draft(target, generation_context)
+            selected = best
+            selection_reason = "best_low_risk_candidate"
+    if selected is None:
+        selected = _fallback_style_draft(target, generation_context)
+        selection_reason = "fallback"
+    return {
+        "ok": True,
+        "draft": selected,
+        "selection_reason": selection_reason,
+        "raw_candidates": candidates,
+        "ranked_candidates": ranked,
+        "generation_context": generation_context,
+        "style_skill": {
+            "enabled": bool((style_skill_context or {}).get("enabled")),
+            "relationship_profile_found": bool((style_skill_context or {}).get("relationship_profile_found")),
+            "correction_hit_count": int((style_skill_context or {}).get("correction_hit_count") or 0),
+        },
+        "call": {
+            "chat_type": str(chat_type or ""),
+            "target_id_present": bool(target_id),
+            "recent_dialogue_count": len(recent_dialogue or []),
+            "include_raw_fewshot": bool(include_raw_fewshot),
+            "scope": scope,
+        },
+    }
+
+
+def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
+    if not result:
+        return ""
+    lines = [
+        "候选筛选：",
+        f"- 选择原因：{result.get('selection_reason')}",
+    ]
+    call = result.get("call") or {}
+    lines.append(
+        f"- 调用：chat_type={call.get('chat_type') or 'unknown'} "
+        f"target_id={bool(call.get('target_id_present'))} "
+        f"recent={call.get('recent_dialogue_count', 0)} raw={call.get('include_raw_fewshot')}"
+    )
+    for index, item in enumerate((result.get("ranked_candidates") or [])[:max(1, int(limit))], start=1):
+        accepted = "Y" if item.get("accepted") else "N"
+        reasons = ",".join((item.get("reasons") or [])[:4])
+        lines.append(
+            f"{index}. {accepted} score={item.get('score')} "
+            f"behavior={item.get('behavior')} text={item.get('text')} reasons={reasons}"
+        )
+    return "\n".join(lines)

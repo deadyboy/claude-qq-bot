@@ -3,7 +3,7 @@
 import asyncio
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 import nonebot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import MessageEvent, GroupMessageEvent, PrivateMessageEvent
@@ -48,9 +48,11 @@ from .safe_tools import (
     search_profile,
 )
 from .style_profile import (
+    format_style_draft_debug,
     format_style_help,
     format_style_profile,
     generate_style_draft,
+    generate_style_draft_result,
     parse_style_command,
     parse_style_draft_payload,
     parse_style_import_file_payload,
@@ -1058,6 +1060,31 @@ def should_route_owner_plain_style_test(event: MessageEvent, text: str, images: 
     return bool(intent.get("game_invitation"))
 
 
+async def generate_owner_private_style_draft(
+    event: PrivateMessageEvent,
+    text: str,
+    *,
+    scope: str,
+    record_dialogue: bool = False,
+) -> Dict[str, Any]:
+    """Shared owner-private style draft entrypoint for commands and plain probes."""
+    session_id = get_session_id(event)
+    if record_dialogue:
+        await chat_session_manager.add_message(session_id, "user", text)
+    result = await generate_style_draft_result(
+        text,
+        include_raw_fewshot=is_style_raw_fewshot_enabled(),
+        chat_type="private",
+        target_id=event.user_id,
+        actor_id=event.user_id,
+        scope=scope,
+        recent_dialogue=None,
+    )
+    if record_dialogue and result.get("draft"):
+        await chat_session_manager.add_message(session_id, "assistant", str(result.get("draft") or ""))
+    return result
+
+
 def _looks_like_command_text(text: str) -> bool:
     stripped = text.strip()
     if stripped.startswith("/"):
@@ -1182,23 +1209,16 @@ async def handle_simple_chat(
         return
 
     if should_route_owner_plain_style_test(event, text, images):
-        session_id = get_session_id(event)
-        history = await chat_session_manager.get_messages(session_id)
-        await chat_session_manager.add_message(session_id, "user", text)
         try:
-            draft = await generate_style_draft(
+            result = await generate_owner_private_style_draft(
+                event,
                 text,
-                include_raw_fewshot=is_style_raw_fewshot_enabled(),
-                chat_type="private",
-                target_id=event.user_id,
-                actor_id=event.user_id,
                 scope="private_owner_style_test",
-                recent_dialogue=history,
+                record_dialogue=True,
             )
-            response = format_reply(draft)
+            response = format_reply(str(result.get("draft") or ""))
             for part in split_qq_msg(response):
                 await send_qq_text(bot, event, part)
-            await chat_session_manager.add_message(session_id, "assistant", response)
         except Exception as e:
             write_runtime_error("owner_plain_style_test", e)
             await send_qq_text(bot, event, f"风格草稿生成失败：{type(e).__name__}")
