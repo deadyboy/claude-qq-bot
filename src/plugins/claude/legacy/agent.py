@@ -1,11 +1,10 @@
 """
-智能体核心引擎
+Legacy intelligent-agent prototype.
 
-负责:
-- 意图识别
-- 任务规划
-- 工具调度
-- 监督日志
+This module is archived for reference only. The production bot no longer
+loads AGENT_MODE, /tasks, or this AgentEngine path. Build future agent
+features from the command/tool/permission layers instead of importing this
+module back into runtime.
 """
 
 import time
@@ -17,8 +16,8 @@ from typing import Dict, List, Any, Optional, Literal
 from dataclasses import dataclass, asdict
 import aiofiles
 
-from .memory_core import UnifiedMemoryManager
-from .api import llm_client
+from ..memory_core import UnifiedMemoryManager
+from ..api import llm_client
 
 # ==================== 数据结构 ====================
 

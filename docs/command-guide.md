@@ -680,9 +680,9 @@ data/style_profiles/import_inbox/
 
 ## Legacy Agent Mode
 
-当前 `AGENT_MODE = False`，旧 Agent Mode 未启用。
+旧 Agent Mode 已归档，当前运行时代码不再包含 `AGENT_MODE` 开关，也不再注册 `/tasks`。
 
-如果未来启用旧 Agent Mode，存在 `/tasks` 查看任务列表的入口，但该路径尚未重构，不建议生产使用。后续计划会用受控 Agent Mode 替代。
+历史原型代码保存在 `src/plugins/claude/legacy/agent.py`，只供参考，不应重新接回生产路径。后续如果做工具型 agent，应基于现有命令、权限、确认和审计层重新实现受控工具循环。
 
 ## 当前架构状态
 
@@ -730,7 +730,7 @@ data/style_profiles/import_inbox/
 
 计划：
 
-- 替换旧 `AGENT_MODE`。
+- 旧 `AGENT_MODE` 已移除；未来只做受控工具循环。
 - 工具 schema 化。
 - 每个工具接入现有权限等级、确认规则、执行日志。
 - 默认高风险输出走草稿或只读。

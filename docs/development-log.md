@@ -76,7 +76,6 @@ Do not commit `.env`, `data/`, logs, caches, or user memory.
   - `/model`
   - `记忆开关 开/关`
   - group `/clear`
-  - legacy Agent Mode `/tasks`
 - Kept per-user commands available to ordinary users:
   - `记住：...`
   - `忘记：...`
@@ -176,9 +175,10 @@ There is intentionally no `bot_<botQQ>` namespace yet. Current priority is testi
 - Connect the trust list and permission levels to future style draft, teaching review, and automation modes.
 - Add richer confirmation metadata for future file/network/shell tools.
 
-### Stage 7: Agent Mode Refactor
+### Stage 7: Controlled Agent Refactor
 
-- Replace the old `AGENT_MODE` path with a controlled tool loop.
+- The old `AGENT_MODE` runtime path has been removed and archived at `src/plugins/claude/legacy/agent.py`.
+- Build any future agent behavior as a controlled tool loop.
 - Tools should have schemas, permission levels, confirmation rules, and execution logs.
 - Default high-risk outputs should be drafts or read-only.
 

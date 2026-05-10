@@ -82,8 +82,9 @@ claude-qq-bot/
 └── src/plugins/claude/
     ├── __init__.py     # 插件入口 ✅
     ├── api.py          # LLM API 调用 ✅
-    ├── memory.py       # 会话记忆管理 ✅
+    ├── memory_core.py  # 会话记忆、用户事实、任务 ✅
     ├── formatter.py    # 消息格式化 ✅
     ├── config.py       # 模型配置 ✅
-    └── dialogue.py     # 对话处理 ✅
+    ├── dialogue.py     # 对话处理 ✅
+    └── commands/       # 命令处理器 ✅
 ```

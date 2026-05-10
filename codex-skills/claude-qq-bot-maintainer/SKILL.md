@@ -21,11 +21,11 @@ Full user-facing command documentation is in `docs/command-guide.md`.
 
 - Never print or commit `.env`, API keys, NapCat tokens, `data/`, logs, or user memory.
 - Keep `.env`, `data/`, runtime logs, cache files, and local DB files ignored by Git.
-- Do not enable old `AGENT_MODE` unless explicitly requested; it is unfinished and should be refactored before production use.
+- Do not revive old `AGENT_MODE`; it has been removed from runtime and archived under `src/plugins/claude/legacy/agent.py`.
 - Preserve the user's logged-in NapCat/QQ session. Restart the bot process only when possible; avoid restarting NapCat unless necessary.
 - In group chats, keep command handlers gated by `should_handle_targeted_event()` so the bot only responds when @ed or replied to.
 - For high-risk tools such as shell/file write/network/bulk memory import, add owner checks and explicit confirmation before execution.
-- Owner-only commands currently include `/status`, `/model`, `记忆开关`, group `/clear`, style-profile commands, style-draft commands, and legacy Agent Mode `/tasks`.
+- Owner-only commands currently include `/status`, `/model`, `记忆开关`, group `/clear`, style-profile commands, style-draft commands, and teaching/correction commands.
 - Keep user-scoped commands such as `记住：...`, `忘记：...`, `我的资料`, `待办`, `时间`, `计算`, and `记忆查询` available to ordinary users.
 - Keep `style_profile` separate from `persona` and `user_profile`; do not write imported chat logs into `key_facts.db` unless a future task explicitly designs that migration.
 - Keep style-profile and style-draft commands private-chat only until a later permission/whitelist stage explicitly opens them.
@@ -45,8 +45,7 @@ Full user-facing command documentation is in `docs/command-guide.md`.
 3. Make focused edits. Prefer existing modules:
    - `src/plugins/claude/dialogue.py` for shared event helpers and command registration.
    - `src/plugins/claude/commands/` for command handlers.
-   - `src/plugins/claude/memory_core.py` for SQLite/user profile/task storage.
-   - `src/plugins/claude/memory.py` for simple session history.
+   - `src/plugins/claude/memory_core.py` for session history, SQLite/user profile/task storage.
    - `src/plugins/claude/persona.py` for bot identity prompt.
    - `src/plugins/claude/auto_memory.py` for automatic user fact extraction.
    - `src/plugins/claude/runtime_state.py` for local runtime switches.
@@ -97,7 +96,7 @@ Keep the architecture separated:
 - `style_profile`: owner speaking-style profile and draft generation, stored under `data/style_profiles/`.
 - `style_skill`: local 36.skill runtime persona, relationship profiles, memory patterns, and active correction layer.
 - `safe_tools`: low-risk commands that do not require agentic autonomy.
-- Future controlled agent mode: build later from schema-based tools, permissions, confirmations, and logs. Do not revive old `AGENT_MODE`.
+- Future controlled agent mode: build later from schema-based tools, permissions, confirmations, and logs. Do not revive old `AGENT_MODE` or import `legacy/agent.py` into runtime.
 
 ## Subagent Use
 

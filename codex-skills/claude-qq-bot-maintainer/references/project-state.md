@@ -19,7 +19,7 @@
 - NapCat config should point reverse WebSocket to `ws://127.0.0.1:8081/onebot/v11/ws`.
 - Prefer restarting only the bot listener, not NapCat, to preserve the QQ login session.
 - Full command guide: `docs/command-guide.md`.
-- Current observed runtime: Python bot process is listening on `127.0.0.1:8081` and connected to the local QQ/NapCat process.
+- Current observed runtime: Python bot process is expected to listen on `127.0.0.1:8081` after restart and connect to the local QQ/NapCat process.
 - Current runtime toggles in `data/runtime_state.json`: auto memory on, style raw few-shot off, teaching review off. The old style auto-reply toggle has been removed.
 - Current trust-list snapshot: 2 trusted private users, 0 trusted groups.
 - Current owner style profile snapshot: Stage 5B/36.skill runtime is active for draft generation and teaching review. Auto-sending owner-style replies is retired.
@@ -81,7 +81,6 @@
   - `/model`
   - `记忆开关 开/关`
   - group `/clear`
-  - legacy Agent Mode `/tasks`
 - Kept user-scoped commands available to ordinary users.
 - Removed raw QQ-number substring matching from group targeting.
 - Disabled automatic memory extraction in group chats; explicit `记住：...` remains available.
@@ -160,7 +159,7 @@ There is currently no `bot_<botQQ>` namespace. This is intentional for the curre
 
 ### Stage 5B: Distillation Quality and Evaluation
 
-- Added `src/plugins/claude/style_distill.py` for offline QCE JSON distillation.
+- Added `src/plugins/claude/style/distill/` for offline QCE JSON distillation; `src/plugins/claude/style_distill.py` remains a compatibility facade.
 - Added `/风格 离线蒸馏` as an owner-only, private-only Stage 5B entry point.
 - Builds high-quality sample indexes from chat logs: previous message/context plus the owner's real reply.
 - Stores only aggregate style summaries and message-id based sample indexes; no raw chat text is persisted in the summary or index.
@@ -203,8 +202,9 @@ Still planned:
 - Connect trust lists and permission levels to future style draft, teaching review, and automation modes.
 - Add richer confirmation metadata for future file/network/shell tools.
 
-### Stage 7: Agent Mode Refactor
+### Stage 7: Controlled Agent Refactor
 
-- Replace the old `AGENT_MODE` path with a controlled tool loop.
+- The old `AGENT_MODE` runtime path has been removed. Its historical prototype is archived at `src/plugins/claude/legacy/agent.py` for reference only.
+- Build any future agent behavior as a controlled tool loop.
 - Tools should have schemas, permission levels, confirmation rules, and execution logs.
 - Default high-risk outputs should be drafts or read-only.
