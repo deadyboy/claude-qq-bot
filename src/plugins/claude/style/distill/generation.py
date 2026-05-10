@@ -98,6 +98,14 @@ def style_rerank_candidates(
         "有的呀", "有的啊", "当然", "可以呀", "可以啊", "想一起", "一起开黑",
         "来开黑", "开黑吗", "一起玩吗", "玩吗？", "玩吗?",
     )
+    game_commit_replies = {
+        "有", "有啊", "有的", "打", "打瓦", "可瓦", "可以", "能打",
+        "来", "我来", "上号", "能瓦",
+    }
+    game_safe_replies = {
+        "无", "暂无", "暂不", "等会", "等一会", "等下", "等等",
+        "可以问问", "问问", "何意", "何意味", "咋说", "咋了",
+    }
     history_texts = [
         re.sub(r"\s+", " ", str(item or "")).strip()
         for item in (historical_targets or [])
@@ -163,6 +171,20 @@ def style_rerank_candidates(
             if any(marker in text for marker in game_invitation_markers):
                 score -= 44
                 reasons.append("assistant_like_game_invite")
+            compact_text = re.sub(r"\s+", "", text.strip("。.!！?？~～"))
+            if compact_text in game_commit_replies:
+                score -= 52
+                reasons.append("unknown_game_availability_commit")
+            if (
+                compact_text.startswith(("有", "打", "可瓦", "上号"))
+                and not compact_text.startswith(("暂无", "无", "等", "问", "何", "咋"))
+                and "问问" not in compact_text
+            ):
+                score -= 32
+                reasons.append("unknown_game_availability_commit")
+            if compact_text in game_safe_replies or "可以问问" in compact_text:
+                score += 16
+                reasons.append("safe_game_deflection")
             if text.endswith(("！", "!")):
                 score -= 12
                 reasons.append("over_excited_game_invite")
@@ -198,6 +220,7 @@ def style_rerank_candidates(
             or "copied_history_exact" in reasons
             or "copied_history_near" in reasons
             or "assistant_like_game_invite" in reasons
+            or "unknown_game_availability_commit" in reasons
             or ("too_formal" in reasons and scene_label != "formal_or_worklike")
         )
         ranked.append({"text": text, "score": score, "reasons": reasons, "accepted": score >= 55 and not hard_reject})
