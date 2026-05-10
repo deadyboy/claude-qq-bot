@@ -1184,6 +1184,16 @@ def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None
     return "我看看"
 
 
+def _requires_safe_fallback(generation_context: Dict[str, Any] | None) -> bool:
+    intent = ((generation_context or {}).get("query_features") or {}).get("intent") or {}
+    return bool(
+        intent.get("game_invitation")
+        or intent.get("availability_query")
+        or intent.get("reality_state_query")
+        or intent.get("task_request")
+    )
+
+
 def _audit_style_generation(
     *,
     actor_id: str | int | None,
@@ -1317,6 +1327,8 @@ async def generate_style_draft(
     for item in ranked:
         if item.get("accepted"):
             return str(item.get("text") or "").strip()
+    if _requires_safe_fallback(generation_context):
+        return _fallback_style_draft(target, generation_context)
     if ranked:
         best = str(ranked[0].get("text") or "").strip()
         if best and int(ranked[0].get("score") or 0) >= 40:

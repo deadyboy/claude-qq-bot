@@ -125,6 +125,11 @@ def style_rerank_candidates(
             continue
         score = 100
         reasons = []
+        compact_latest = re.sub(r"\s+", "", str(latest_message or "").strip("。.!！?？~～"))
+        compact_candidate = re.sub(r"\s+", "", text.strip("。.!！?？~～"))
+        if compact_latest and compact_candidate == compact_latest:
+            score -= 70
+            reasons.append("copied_current_message")
         if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
             score -= 90
             reasons.append("invalid_text")
@@ -171,7 +176,7 @@ def style_rerank_candidates(
             if any(marker in text for marker in game_invitation_markers):
                 score -= 44
                 reasons.append("assistant_like_game_invite")
-            compact_text = re.sub(r"\s+", "", text.strip("。.!！?？~～"))
+            compact_text = compact_candidate
             if compact_text in game_commit_replies:
                 score -= 52
                 reasons.append("unknown_game_availability_commit")
@@ -219,6 +224,7 @@ def style_rerank_candidates(
             or "credential_share_risk" in reasons
             or "copied_history_exact" in reasons
             or "copied_history_near" in reasons
+            or "copied_current_message" in reasons
             or "assistant_like_game_invite" in reasons
             or "unknown_game_availability_commit" in reasons
             or ("too_formal" in reasons and scene_label != "formal_or_worklike")
