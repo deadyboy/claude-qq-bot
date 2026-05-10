@@ -968,6 +968,15 @@ def should_suppress_plain_chat_for_style_target(event: MessageEvent) -> bool:
     return access_store.is_trusted_user(event.user_id)
 
 
+def should_allow_plain_chat(event: MessageEvent) -> bool:
+    """Limit the legacy generic assistant path to explicit safe scopes."""
+    if is_owner_event(event):
+        return True
+    if isinstance(event, GroupMessageEvent):
+        return access_store.is_trusted_group(event.group_id)
+    return False
+
+
 def _looks_like_command_text(text: str) -> bool:
     stripped = text.strip()
     if stripped.startswith("/"):
@@ -1164,6 +1173,25 @@ async def handle_simple_chat(
             actor_id=getattr(event, "user_id", ""),
             status="suppressed",
             result="scope=private",
+        )
+        return
+
+    if not should_allow_plain_chat(event):
+        if isinstance(event, PrivateMessageEvent):
+            scope = "private"
+            summary = "普通私聊未授权，跳过普通聊天兜底"
+        else:
+            scope = "group"
+            summary = "当前群未加入信任群，跳过普通聊天兜底"
+        confirmation_store.log(
+            {
+                "id": "plain_chat_scope_skip",
+                "type": "plain_chat_scope_suppressed",
+                "summary": summary,
+            },
+            actor_id=getattr(event, "user_id", ""),
+            status="suppressed",
+            result=f"scope={scope}",
         )
         return
 
