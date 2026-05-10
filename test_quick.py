@@ -287,15 +287,10 @@ async def test_permissions():
     runtime_state.STATE_FILE = state_path
     try:
         assert runtime_state.is_style_raw_fewshot_enabled() is False
-        assert runtime_state.is_style_auto_reply_enabled() is False
         runtime_state.set_style_raw_fewshot_enabled(True)
-        runtime_state.set_style_auto_reply_enabled(True)
         assert runtime_state.is_style_raw_fewshot_enabled() is True
-        assert runtime_state.is_style_auto_reply_enabled() is True
         runtime_state.set_style_raw_fewshot_enabled(False)
-        runtime_state.set_style_auto_reply_enabled(False)
         assert runtime_state.is_style_raw_fewshot_enabled() is False
-        assert runtime_state.is_style_auto_reply_enabled() is False
     finally:
         runtime_state.STATE_FILE = old_state_file
         if state_path.exists():

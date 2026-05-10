@@ -35,10 +35,8 @@ from .permissions import (
 )
 from .runtime_state import is_auto_memory_enabled, set_auto_memory_enabled
 from .runtime_state import (
-    is_style_auto_reply_enabled,
     is_style_raw_fewshot_enabled,
     is_style_teaching_enabled,
-    set_style_auto_reply_enabled,
     set_style_raw_fewshot_enabled,
     set_style_teaching_enabled,
 )
@@ -624,21 +622,13 @@ def parse_access_payload(text: str) -> tuple[str, str, str]:
     return "view", "", ""
 
 
-def parse_switch_payload(text: str, prefixes: tuple[str, ...]) -> str:
-    stripped = text.strip()
-    lowered = stripped.lower()
-    for prefix in prefixes:
-        if lowered == prefix.lower():
-            return ""
-        if lowered.startswith(prefix.lower() + " "):
-            return stripped[len(prefix):].strip(" ：:").lower()
-        if stripped.startswith(prefix + "：") or stripped.startswith(prefix + ":"):
-            return stripped[len(prefix) + 1:].strip().lower()
-    return stripped.strip(" ：:").lower()
-
-
-def parse_delegate_payload(text: str) -> str:
-    return parse_switch_payload(text, ("/auto-reply", "/autoreply", "/代聊", "代聊"))
+def retired_auto_reply_message() -> str:
+    return "\n".join([
+        "自动代聊发送已退役。",
+        "- 当前可用：/教学 开，信任用户私聊只生成候选给主人审核。",
+        "- 手动草稿：/用我的风格回复：<对方消息>",
+        "- 不再支持：/代聊 开、/风格 自动回复 开。",
+    ])
 
 
 def parse_style_switch_payload(payload: str) -> str:
@@ -855,7 +845,6 @@ async def generate_teaching_candidates(
                 target_id=target_id,
                 actor_id=actor_id,
                 scope=chat_type,
-                auto_reply=False,
                 recent_dialogue=recent_dialogue,
             )
             fallback = format_reply(fallback)
@@ -932,9 +921,7 @@ async def execute_pending_action(action: dict) -> str:
         return f"真实历史原句 few-shot 已{'开启' if enabled else '关闭'}。"
 
     if action_type == "style_auto_reply_set":
-        enabled = str(payload.get("enabled", "")).lower() in {"true", "1", "yes", "on"}
-        set_style_auto_reply_enabled(enabled)
-        return f"受控代聊自动回复已{'开启' if enabled else '关闭'}。"
+        return "自动代聊发送已退役，未执行。请使用 /教学 开 进入影子审核。"
 
     if action_type == "clear_session":
         session_id = payload.get("session_id", "")
@@ -950,7 +937,7 @@ async def execute_pending_action(action: dict) -> str:
     return f"未知待确认操作：{action_type}"
 
 
-def _style_auto_scope(event: MessageEvent) -> tuple[str, str, bool]:
+def _style_target_scope(event: MessageEvent) -> tuple[str, str, bool]:
     """Return chat_type, target_id, and whether the target is trusted."""
     if isinstance(event, GroupMessageEvent):
         return "group", str(event.group_id), access_store.is_trusted_group(event.group_id)
@@ -963,7 +950,7 @@ def should_suppress_plain_chat_for_style_target(event: MessageEvent) -> bool:
         return False
     if is_owner_event(event):
         return False
-    if is_style_teaching_enabled() or is_style_auto_reply_enabled():
+    if is_style_teaching_enabled():
         return False
     return access_store.is_trusted_user(event.user_id)
 
@@ -992,60 +979,6 @@ def _looks_like_command_text(text: str) -> bool:
     )
 
 
-async def maybe_handle_style_auto_reply(
-    bot: nonebot.adapters.onebot.v11.Bot,
-    event: MessageEvent,
-    text: str,
-) -> bool:
-    """Return True when style auto-reply mode handled or intentionally suppressed the event."""
-    if not is_style_auto_reply_enabled():
-        return False
-    if not text.strip() or _looks_like_command_text(text):
-        return False
-
-    chat_type, target_id, trusted = _style_auto_scope(event)
-    if not trusted:
-        return True
-
-    mapping = find_source_for_target(target_id, chat_type=chat_type)
-    if not mapping.get("matched"):
-        confirmation_store.log(
-            {
-                "id": "style_skip",
-                "type": "style_auto_reply_skip",
-                "summary": f"受控代聊跳过：未匹配 {chat_type} 本地画像",
-            },
-            actor_id=getattr(event, "user_id", ""),
-            status="skipped",
-            result=f"chat_type={chat_type}",
-        )
-        return True
-
-    from .memory import session_manager as simple_session_manager
-    session_id = get_session_id(event)
-    history = await simple_session_manager.get_messages(session_id)
-
-    try:
-        await simple_session_manager.add_message(session_id, "user", text)
-        draft = await generate_style_draft(
-            text,
-            include_raw_fewshot=is_style_raw_fewshot_enabled(),
-            chat_type=chat_type,
-            target_id=target_id,
-            actor_id=getattr(event, "user_id", ""),
-            scope=chat_type,
-            auto_reply=True,
-            recent_dialogue=history,
-        )
-        response = format_reply(draft)
-        for part in split_qq_msg(response):
-            await send_qq_text(bot, event, part)
-        await simple_session_manager.add_message(session_id, "assistant", response)
-    except Exception as e:
-        write_runtime_error("maybe_handle_style_auto_reply", e)
-    return True
-
-
 async def maybe_handle_style_teaching_review(
     bot: nonebot.adapters.onebot.v11.Bot,
     event: MessageEvent,
@@ -1061,7 +994,7 @@ async def maybe_handle_style_teaching_review(
     if is_owner_event(event):
         return False
 
-    chat_type, target_id, trusted = _style_auto_scope(event)
+    chat_type, target_id, trusted = _style_target_scope(event)
     if not trusted:
         return False
     owner_ids = sorted(get_owner_ids())
@@ -1159,16 +1092,12 @@ async def handle_simple_chat(
 
     if await maybe_handle_style_teaching_review(bot, event, text):
         return
-    if await maybe_handle_style_auto_reply(bot, event, text):
-        return
-    if is_style_auto_reply_enabled():
-        return
     if should_suppress_plain_chat_for_style_target(event):
         confirmation_store.log(
             {
                 "id": "plain_chat_skip",
                 "type": "style_plain_chat_suppressed",
-                "summary": "信任联系人未开启教学/代聊，跳过普通聊天兜底",
+                "summary": "信任联系人未开启教学，跳过普通聊天兜底",
             },
             actor_id=getattr(event, "user_id", ""),
             status="suppressed",
@@ -1416,7 +1345,7 @@ async def handle_basic_status(
         f"- 模型：{model_config.get_current_model()}",
         f"- API Base：{model_config.get_current_api_base()}",
         f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",
-        f"- 代聊自动回复：{'开' if is_style_auto_reply_enabled() else '关'}",
+        "- 自动代聊发送：已退役",
         f"- 教学影子审核：{'开' if is_style_teaching_enabled() else '关'}",
         f"- 真实原句 few-shot：{'开' if is_style_raw_fewshot_enabled() else '关'}",
         f"- 你的资料：{len(profile.get('items') or [])} 条",
@@ -1541,7 +1470,7 @@ async def handle_access_policy(
     event: MessageEvent,
     state: T_State,
 ):
-    """管理未来自动代聊/高风险工具的信任名单。"""
+    """管理教学审核/高风险工具的信任名单。"""
     if not should_handle_targeted_event(event, bot):
         return
     if not await require_owner(bot, event, "信任名单管理"):
@@ -1629,60 +1558,16 @@ async def handle_delegate_mode(
     event: MessageEvent,
     state: T_State,
 ):
-    """控制信任名单内的 owner-style 自动回复。"""
+    """Retired auto-reply command kept as a clear owner-facing notice."""
     if not should_handle_targeted_event(event, bot):
         return
-    if not await require_owner(bot, event, "代聊自动回复"):
+    if not await require_owner(bot, event, "代聊命令"):
         return
     if isinstance(event, GroupMessageEvent):
-        await send_qq_text(bot, event, "代聊开关请在私聊中使用，避免公开暴露策略。")
+        await send_qq_text(bot, event, "自动代聊发送已退役；请在私聊使用 /教学 开。")
         return
 
-    payload = parse_delegate_payload(get_plain_text(event))
-    if not payload or payload in {"状态", "status", "查看"}:
-        await send_qq_text(
-            bot,
-            event,
-            "\n".join([
-                "代聊自动回复状态：",
-                f"- 自动回复：{'开' if is_style_auto_reply_enabled() else '关'}",
-                f"- 真实原句 few-shot：{'开' if is_style_raw_fewshot_enabled() else '关'}",
-                "- 生效范围：信任用户私聊；信任群中仍只响应 @ 或回复机器人",
-                "- 关系映射：必须能在最新 Stage 5B QCE 导出中匹配到该用户/群",
-                "用法：/代聊 开；/代聊 关；/白名单 添加用户 <QQ>",
-            ]),
-        )
-        return
-
-    if _is_switch_on(payload):
-        await send_qq_text(
-            bot,
-            event,
-            create_confirmation(
-                event,
-                "style_auto_reply_set",
-                "开启信任名单内 owner-style 代聊自动回复",
-                {"enabled": "true"},
-            ),
-        )
-        return
-
-    if _is_switch_off(payload):
-        set_style_auto_reply_enabled(False)
-        confirmation_store.log(
-            {
-                "id": "style_auto_off",
-                "type": "style_auto_reply_set",
-                "summary": "关闭 owner-style 代聊自动回复",
-            },
-            actor_id=event.user_id,
-            status="executed",
-            result="enabled=false",
-        )
-        await send_qq_text(bot, event, "受控代聊自动回复已关闭。")
-        return
-
-    await send_qq_text(bot, event, "用法：/代聊 状态；/代聊 开；/代聊 关")
+    await send_qq_text(bot, event, retired_auto_reply_message())
 
 
 memory_toggle_cmd = on_message(rule=is_memory_toggle_command, priority=4, block=True)
@@ -2175,7 +2060,7 @@ async def handle_style_command(
                 "\n".join([
                     "真实历史原句 few-shot：",
                     f"- 当前：{'开' if is_style_raw_fewshot_enabled() else '关'}",
-                    "- 作用：开启后，风格草稿/代聊可把少量经过脱敏的真实历史上下文和主人回复发给模型作为 few-shot。",
+                    "- 作用：开启后，手动草稿和教学候选可把少量经过脱敏的真实历史上下文和主人回复发给模型作为 few-shot。",
                     "- 审计：每次使用只记录 sample_id/source_id/字数/目标 hash，不记录原文。",
                     "用法：/风格 原句 开；/风格 原句 关",
                 ]),
@@ -2211,48 +2096,8 @@ async def handle_style_command(
         return
 
     if action == "auto_reply":
-        switch = parse_style_switch_payload(payload)
-        if not switch or switch in {"状态", "status", "查看"}:
-            await send_qq_text(
-                bot,
-                event,
-                "\n".join([
-                    "代聊自动回复状态：",
-                    f"- 自动回复：{'开' if is_style_auto_reply_enabled() else '关'}",
-                    f"- 真实原句 few-shot：{'开' if is_style_raw_fewshot_enabled() else '关'}",
-                    "- 生效范围：信任用户私聊；信任群中仍只响应 @ 或回复机器人",
-                    "- 关系映射：必须能在最新 Stage 5B QCE 导出中匹配到该用户/群",
-                    "用法：/风格 自动回复 开；/风格 自动回复 关",
-                ]),
-            )
-            return
-        if _is_switch_on(switch):
-            await send_qq_text(
-                bot,
-                event,
-                create_confirmation(
-                    event,
-                    "style_auto_reply_set",
-                    "开启信任名单内 owner-style 代聊自动回复",
-                    {"enabled": "true"},
-                ),
-            )
-            return
-        if _is_switch_off(switch):
-            set_style_auto_reply_enabled(False)
-            confirmation_store.log(
-                {
-                    "id": "style_auto_off",
-                    "type": "style_auto_reply_set",
-                    "summary": "关闭 owner-style 代聊自动回复",
-                },
-                actor_id=event.user_id,
-                status="executed",
-                result="enabled=false",
-            )
-            await send_qq_text(bot, event, "受控代聊自动回复已关闭。")
-            return
-        await send_qq_text(bot, event, "用法：/风格 自动回复 状态；/风格 自动回复 开；/风格 自动回复 关")
+        parse_style_switch_payload(payload)
+        await send_qq_text(bot, event, retired_auto_reply_message())
         return
 
     if action == "clear_examples":
@@ -2290,7 +2135,7 @@ async def handle_help_basic(
         "- /status 或 状态：主人查看运行状态",
         "- /tools 或 工具：查看工具列表",
         "- /确认 <id> / /取消 <id>：主人执行或取消待确认操作",
-        "- /白名单：主人管理未来自动代聊/高风险工具信任名单",
+        "- /白名单：主人管理教学审核/高风险工具信任名单",
         "- /model：主人查看或切换模型",
         "- /clear：清空当前会话历史；群聊中仅主人可用",
         "- 记住：...：保存你的资料",

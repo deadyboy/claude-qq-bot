@@ -964,7 +964,7 @@ def format_style_help() -> str:
         "- /风格 检索 <当前对方消息>：本地检索相似历史样本索引，不返回历史原文",
         "- /风格 调试 <当前对方消息>：owner 私聊查看本次检索、意图和真实历史样本原文",
         "- /风格 原句 开/关：控制真实历史原句 few-shot，开启需要二次确认并写审计",
-        "- /风格 自动回复 开/关：控制信任名单内的 owner-style 代聊自动回复",
+        "- /风格 自动回复：已退役；请使用 /教学 开 进入影子审核",
         "- /教学 开/关：开启影子审核；信任用户私聊只生成候选给主人，不自动回复",
         "- /教学 出题 <数量> [场景]：从高质量历史样本批量生成审核题，不需要你手写测试对话",
         "- /采纳 <id> <1-3>；/评分 <id> <1-5>；/改成 <id> <正确回复>；/拒绝 <id> <原因>：记录教学反馈",
@@ -1136,12 +1136,11 @@ def _audit_style_generation(
     target_id: str | int | None,
     scope: str,
     context: Dict[str, Any] | None,
-    auto_reply: bool,
 ) -> None:
     if not context or not context.get("ok"):
         return
     raw_examples = context.get("few_shot_examples") or []
-    if not raw_examples and not auto_reply:
+    if not raw_examples:
         return
     try:
         from .confirmation import confirmation_store
@@ -1153,9 +1152,6 @@ def _audit_style_generation(
                 "chat_type": str(item.get("chat_type") or "")[:16],
                 "char_counts": item.get("char_counts") or {},
             })
-        action_type = "style_auto_reply" if auto_reply else "style_raw_fewshot_prompt"
-        if auto_reply and raw_examples:
-            action_type = "style_auto_reply_raw_fewshot"
         result = json.dumps(
             {
                 "run_id": context.get("run_id"),
@@ -1171,11 +1167,8 @@ def _audit_style_generation(
         confirmation_store.log(
             {
                 "id": hashlib.sha1(result.encode("utf-8", errors="ignore")).hexdigest()[:8],
-                "type": action_type,
-                "summary": (
-                    "生成 owner-style 自动回复" if auto_reply
-                    else "生成 owner-style 草稿时使用真实历史 few-shot"
-                ),
+                "type": "style_raw_fewshot_prompt",
+                "summary": "生成 owner-style 草稿/教学候选时使用真实历史 few-shot",
             },
             actor_id=actor_id or "",
             status="executed",
@@ -1194,7 +1187,6 @@ async def generate_style_draft(
     target_id: str | int | None = None,
     actor_id: str | int | None = None,
     scope: str = "private",
-    auto_reply: bool = False,
     recent_dialogue: List[Dict[str, Any]] | None = None,
 ) -> str:
     target = message.strip()
@@ -1236,7 +1228,6 @@ async def generate_style_draft(
         target_id=target_id,
         scope=scope,
         context=generation_context,
-        auto_reply=auto_reply,
     )
     user_prompt_parts = []
     recent_prompt = format_recent_dialogue_for_prompt(recent_dialogue)

@@ -12,7 +12,6 @@ STATE_FILE = Path("data/runtime_state.json")
 DEFAULT_STATE: Dict[str, Any] = {
     "auto_memory_enabled": True,
     "style_raw_fewshot_enabled": False,
-    "style_auto_reply_enabled": False,
     "style_teaching_enabled": False,
 }
 
@@ -62,18 +61,6 @@ def set_style_raw_fewshot_enabled(enabled: bool) -> None:
     """设置真实历史原句 few-shot 开关。"""
     state = load_state()
     state["style_raw_fewshot_enabled"] = bool(enabled)
-    save_state(state)
-
-
-def is_style_auto_reply_enabled() -> bool:
-    """受控代聊自动回复是否启用。"""
-    return bool(load_state().get("style_auto_reply_enabled", False))
-
-
-def set_style_auto_reply_enabled(enabled: bool) -> None:
-    """设置受控代聊自动回复开关。"""
-    state = load_state()
-    state["style_auto_reply_enabled"] = bool(enabled)
     save_state(state)
 
 
