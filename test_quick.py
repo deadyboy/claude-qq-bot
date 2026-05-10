@@ -66,9 +66,11 @@ from src.plugins.claude.style_profile import (
     parse_style_import_file_payload,
     parse_style_set_payload,
 )
-from src.plugins.claude.style_distill import (
+from src.plugins.claude.style.distill.embedding import (
     build_embedding_metadata,
     build_embedding_text,
+)
+from src.plugins.claude.style_distill import (
     build_retrieval_first_prompt,
     build_style_generation_context,
     detect_message_intent,
