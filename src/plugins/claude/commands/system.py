@@ -32,11 +32,7 @@ async def handle_clear(
         )
         return
 
-    if AGENT_MODE and agent_engine:
-        await agent_engine.memory.short_term.clear(session_id)
-    else:
-        from ..memory import session_manager as simple_manager
-        await simple_manager.clear_session(session_id)
+    await chat_session_manager.clear_session(session_id)
 
     await send_qq_text(bot, event, "会话历史已清空")
 
@@ -101,7 +97,7 @@ async def handle_basic_status(
         "运行状态：",
         f"- Bot QQ：{bot.self_id}",
         f"- 当前场景：{session_kind}",
-        f"- 模式：{'Agent Mode' if AGENT_MODE else '简单稳定模式'}",
+        "- 模式：普通聊天 + 记忆 + 教学审核",
         f"- 模型：{model_config.get_current_model()}",
         f"- API Base：{model_config.get_current_api_base()}",
         f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",

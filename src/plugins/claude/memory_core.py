@@ -192,6 +192,10 @@ class ShortTermMemoryManager:
         if session_id in self._cache:
             del self._cache[session_id]
 
+    async def clear_session(self, session_id: str):
+        """Compatibility alias for the retired memory.SessionManager API."""
+        await self.clear(session_id)
+
     async def mark_important(self, session_id: str, message_index: int):
         """标记重要消息"""
         messages = await self.get_messages(session_id)
@@ -873,3 +877,7 @@ class UnifiedMemoryManager:
 
 # 全局单例
 memory_manager = UnifiedMemoryManager()
+session_manager = ShortTermMemoryManager(
+    max_messages=20,
+    timeout=int(os.getenv("SESSION_TIMEOUT", "3600")),
+)
