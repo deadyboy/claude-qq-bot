@@ -26,6 +26,7 @@ DEFAULT_TORCH_HOME = DEFAULT_MODEL_ROOT / "torch"
 DEFAULT_COLLECTION_NAME = "stage5b_rag_pool_bge_small_zh_v1_5"
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_QUERY_LIMIT = 20
+_MODEL_CACHE: Dict[str, Any] = {}
 __all__ = [
     "DEFAULT_EMBEDDING_MODEL",
     "configure_embedding_environment",
@@ -157,11 +158,17 @@ def _local_sentence_transformer_path(model_name: str) -> Path | None:
 
 def _load_sentence_transformer(model_name: str = DEFAULT_EMBEDDING_MODEL):
     configure_embedding_environment()
+    cached = _MODEL_CACHE.get(model_name)
+    if cached is not None:
+        return cached
+
     from sentence_transformers import SentenceTransformer
 
     local_path = _local_sentence_transformer_path(model_name)
     load_target = str(local_path) if local_path else model_name
-    return SentenceTransformer(load_target, cache_folder=str(DEFAULT_SENTENCE_TRANSFORMERS_CACHE))
+    model = SentenceTransformer(load_target, cache_folder=str(DEFAULT_SENTENCE_TRANSFORMERS_CACHE))
+    _MODEL_CACHE[model_name] = model
+    return model
 
 
 def _chroma_client(index_dir: Path):

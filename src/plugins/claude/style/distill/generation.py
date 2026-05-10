@@ -299,6 +299,7 @@ def _build_raw_few_shot_examples(
     *,
     limit: int = DEFAULT_RAW_FEWSHOT_LIMIT,
     preferred_chat_type: str | None = None,
+    run_path: Path | None = None,
 ) -> List[Dict[str, Any]]:
     """Extract real historical snippets for owner-authorized few-shot prompts.
 
@@ -310,21 +311,73 @@ def _build_raw_few_shot_examples(
         for sample in samples
         if isinstance(sample, dict)
     }
+    pair_lookup: Dict[str, Dict[str, Any]] = {}
     cache: Dict[str, List[Dict[str, Any]]] = {}
     examples = []
     for result in retrieval_results:
-        if _safe_float(result.get("similarity")) < MIN_RAW_FEWSHOT_SIMILARITY:
+        embedding_similarity = _safe_float(result.get("embedding_similarity"))
+        if (
+            _safe_float(result.get("similarity")) < MIN_RAW_FEWSHOT_SIMILARITY
+            and embedding_similarity < 0.43
+        ):
             continue
         if (
             _safe_float(result.get("context_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
             and _safe_float(result.get("keyword_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
+            and embedding_similarity < 0.43
         ):
             continue
         if preferred_chat_type and result.get("chat_type") != preferred_chat_type:
             continue
-        sample_id = str(result.get("sample_id") or "")
+        sample_id = str(result.get("sample_id") or result.get("pair_id") or "")
         sample = by_sample_id.get(sample_id)
         if not sample:
+            if not run_path:
+                continue
+            if not pair_lookup:
+                pair_lookup = {
+                    str(pair.get("pair_id") or ""): pair
+                    for pair in _load_dialogue_pairs(run_path)
+                    if isinstance(pair, dict) and str(pair.get("pair_id") or "").strip()
+                }
+            pair = pair_lookup.get(str(result.get("pair_id") or sample_id))
+            if not pair:
+                continue
+            context_lines = []
+            for turn in (pair.get("context") or [])[-6:]:
+                if not isinstance(turn, dict):
+                    continue
+                role = str(turn.get("role") or "")
+                if role not in {"other", "self"}:
+                    continue
+                text = _clean_raw_fewshot_text(turn.get("text") or "\n".join(turn.get("raw_texts") or []))
+                if not text:
+                    continue
+                label = "主人" if role == "self" else "对方"
+                context_lines.append({"role": label, "text": text})
+            if len(context_lines) > 3:
+                context_lines = context_lines[-3:]
+            target = pair.get("target") if isinstance(pair.get("target"), dict) else {}
+            owner_reply = _clean_raw_fewshot_text(target.get("text") or "\n".join(target.get("raw_texts") or []))
+            if not owner_reply or not context_lines:
+                continue
+            examples.append({
+                "sample_id": sample_id,
+                "pair_id": pair.get("pair_id"),
+                "source_file_id": pair.get("source_file_id"),
+                "chat_type": pair.get("chat_type"),
+                "similarity": result.get("similarity"),
+                "quality_score": result.get("quality_score"),
+                "retrieval_source": result.get("retrieval_source"),
+                "context": context_lines,
+                "owner_reply": owner_reply,
+                "char_counts": {
+                    "context": sum(len(item.get("text") or "") for item in context_lines),
+                    "owner_reply": len(owner_reply),
+                },
+            })
+            if len(examples) >= limit:
+                break
             continue
         source_file_id = str(sample.get("source_file_id") or "")
         messages = _load_source_messages(catalog, source_file_id, cache)
@@ -376,10 +429,12 @@ def _build_raw_few_shot_examples(
 
         examples.append({
             "sample_id": sample_id,
+            "pair_id": result.get("pair_id") or sample.get("pair_id"),
             "source_file_id": source_file_id,
             "chat_type": sample.get("chat_type"),
             "similarity": result.get("similarity"),
             "quality_score": result.get("quality_score"),
+            "retrieval_source": result.get("retrieval_source"),
             "context": context_lines,
             "owner_reply": owner_reply,
             "char_counts": {
@@ -479,6 +534,7 @@ def build_style_generation_context(
             retrieval_results,
             limit=max(0, min(DEFAULT_RAW_FEWSHOT_LIMIT, int(raw_fewshot_limit))),
             preferred_chat_type=chat_type,
+            run_path=run_path,
         )
 
     return {
@@ -497,6 +553,8 @@ def build_style_generation_context(
             "identifier_policy": "Target QQ/group id is used locally but not included in prompts.",
         },
         "query_features": query_features,
+        "retrieval_strategy": retrieval.get("retrieval_strategy") or "rules_only",
+        "embedding_status": retrieval.get("embedding_status") or {},
         "similar_samples": retrieval_results,
         "relationship_profiles": relationship_profiles,
         "scene_profiles": scene_profiles,

@@ -993,6 +993,17 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
             "- 当前对象映射：已匹配到本地关系画像 "
             f"{target_mapping.get('source_file_id')} ({target_mapping.get('chat_type')})；不暴露 QQ/群号。"
         )
+    if context.get("retrieval_strategy"):
+        embedding_status = context.get("embedding_status") or {}
+        if embedding_status.get("enabled"):
+            lines.append(
+                "- 检索："
+                f"{context.get('retrieval_strategy')}，"
+                f"向量={'可用' if embedding_status.get('ok') else '不可用'}，"
+                f"hits={embedding_status.get('result_count', 0)}"
+            )
+        else:
+            lines.append(f"- 检索：{context.get('retrieval_strategy')}")
     guidance = context.get("guidance") or {}
     if guidance:
         lines.append("生成策略：")
@@ -1029,7 +1040,8 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
         lines.append("相似历史样本索引摘要：")
         for index, item in enumerate(samples[:5], start=1):
             lines.append(
-                f"- {index}. sim={item.get('similarity')} q={item.get('quality_score')} "
+                f"- {index}. sim={item.get('similarity')} rule={item.get('rule_similarity')} "
+                f"emb={item.get('embedding_similarity')} src={item.get('retrieval_source')} q={item.get('quality_score')} "
                 f"{item.get('chat_type')} reply_len={item.get('reply_char_length')} "
                 f"bucket={item.get('reply_length_bucket')} ctx={item.get('context_count')}"
             )

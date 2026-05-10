@@ -6,6 +6,7 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -746,9 +747,52 @@ async def test_style_distill():
         retrieval = retrieve_similar_style_samples("样例问题", run_dir=output_dir)
         assert retrieval["ok"], retrieval
         assert retrieval["result_count"] >= 1
+        assert retrieval["retrieval_strategy"] in {"rules_only", "hybrid_rules_embedding"}
         retrieval_text = json.dumps(retrieval, ensure_ascii=False)
         assert "样例问题A" not in retrieval_text
         assert "样例回复A" not in retrieval_text
+
+        first_pair = json.loads(rag_pool_text.splitlines()[0])
+        with patch(
+            "src.plugins.claude.style.distill.retrieval._query_embedding_index_for_retrieval",
+            return_value={
+                "ok": True,
+                "model": "test-embedding",
+                "result_count": 1,
+                "results": [{
+                    "pair_id": first_pair["pair_id"],
+                    "embedding_similarity": 0.88,
+                    "distance": 0.12,
+                    "metadata": {
+                        "pair_id": first_pair["pair_id"],
+                        "source_file_id": first_pair["source_file_id"],
+                        "chat_type": first_pair["chat_type"],
+                        "scene_label": first_pair["scene_label"],
+                        "score": first_pair["score"],
+                        "length_bucket": first_pair["length_bucket"],
+                        "target_char_length": first_pair["taxonomy"]["target_char_length"],
+                        "context_turn_count": first_pair["taxonomy"]["context_turn_count"],
+                        "scope": first_pair["taxonomy"]["scope"],
+                        "grounding_type": first_pair["taxonomy"]["grounding_type"],
+                        "learning_value": first_pair["taxonomy"]["learning_value"],
+                    },
+                }],
+            },
+        ):
+            hybrid_retrieval = retrieve_similar_style_samples(
+                "嵌入检索测试",
+                run_dir=output_dir,
+                limit=3,
+                preferred_chat_type="private",
+            )
+        assert hybrid_retrieval["ok"], hybrid_retrieval
+        assert hybrid_retrieval["retrieval_strategy"] == "hybrid_rules_embedding"
+        assert hybrid_retrieval["embedding_status"]["ok"]
+        assert hybrid_retrieval["results"][0]["embedding_similarity"] == 0.88
+        assert hybrid_retrieval["results"][0]["retrieval_source"] in {"embedding", "hybrid"}
+        hybrid_text = json.dumps(hybrid_retrieval, ensure_ascii=False)
+        assert "样例问题A" not in hybrid_text
+        assert "样例回复A" not in hybrid_text
 
         mapping = find_source_for_target("2000000002", chat_type="private", run_dir=output_dir)
         assert mapping["matched"], mapping

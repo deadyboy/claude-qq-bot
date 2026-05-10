@@ -40,6 +40,45 @@ def infer_scene_label(
         return "private_long_explain"
     return "private_short_casual"
 
+def _query_embedding_index_for_retrieval(
+    query: str,
+    *,
+    run_dir: str | Path,
+    limit: int,
+) -> Dict[str, Any]:
+    """Query the optional local embedding index without making it a hard runtime dependency."""
+    try:
+        from .embedding import query_stage5b_embedding_index
+
+        return query_stage5b_embedding_index(
+            query,
+            run_dir=run_dir,
+            limit=limit,
+            include_text=False,
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "message": f"embedding 检索不可用：{type(e).__name__}",
+            "error_type": type(e).__name__,
+        }
+
+def _retrieval_sort_key(
+    item: Dict[str, Any],
+    *,
+    preferred_source_file_id: str | None = None,
+    preferred_chat_type: str | None = None,
+) -> tuple:
+    source_file_id = str(item.get("source_file_id") or "")
+    chat_type = str(item.get("chat_type") or "")
+    return (
+        not bool(preferred_source_file_id and source_file_id == preferred_source_file_id),
+        not bool(preferred_chat_type and chat_type == preferred_chat_type),
+        -_safe_float(item.get("similarity")),
+        -_safe_int(item.get("quality_score")),
+        str(item.get("sample_id") or item.get("pair_id") or ""),
+    )
+
 def retrieve_dialogue_pair_samples(
     latest_message: str,
     *,
@@ -190,6 +229,7 @@ def retrieve_similar_style_samples(
     limit: int = DEFAULT_RETRIEVAL_LIMIT,
     preferred_source_file_id: str | None = None,
     preferred_chat_type: str | None = None,
+    use_embedding: bool = True,
 ) -> Dict[str, Any]:
     """Retrieve similar indexed samples using local raw QCE text transiently.
 
@@ -264,11 +304,16 @@ def retrieve_similar_style_samples(
             + quality_bonus,
             4,
         )
+        pair_id = str(sample.get("pair_id") or sample.get("sample_id") or "")
         results.append({
             "sample_id": sample.get("sample_id"),
+            "pair_id": pair_id,
             "source_file_id": source_file_id,
             "chat_type": sample.get("chat_type"),
             "similarity": total_score,
+            "rule_similarity": total_score,
+            "embedding_similarity": 0.0,
+            "retrieval_source": "rules",
             "context_overlap": round(overlap, 4),
             "keyword_overlap": round(keyword_overlap, 4),
             "intent_bonus": round(intent_bonus, 4),
@@ -282,11 +327,119 @@ def retrieve_similar_style_samples(
             "score_reasons": sample.get("score_reasons") or [],
         })
 
-    results.sort(key=lambda item: (-float(item["similarity"]), -int(item["quality_score"]), str(item["sample_id"])))
+    embedding_status = {"enabled": False, "ok": False, "message": "未启用 embedding 检索。"}
+    if use_embedding:
+        embedding_limit = max(20, min(100, int(limit or DEFAULT_RETRIEVAL_LIMIT) * 8))
+        embedding_result = _query_embedding_index_for_retrieval(
+            query_text,
+            run_dir=run_path,
+            limit=embedding_limit,
+        )
+        embedding_status = {
+            "enabled": True,
+            "ok": bool(embedding_result.get("ok")),
+            "model": embedding_result.get("model"),
+            "result_count": int(embedding_result.get("result_count") or 0),
+            "message": embedding_result.get("message") or "",
+        }
+        if embedding_result.get("ok"):
+            by_pair_id = {
+                str(item.get("pair_id") or item.get("sample_id") or ""): item
+                for item in results
+                if str(item.get("pair_id") or item.get("sample_id") or "").strip()
+            }
+            samples_by_pair_id = {
+                str(sample.get("pair_id") or sample.get("sample_id") or ""): sample
+                for sample in samples
+                if isinstance(sample, dict)
+            }
+            for rank, hit in enumerate(embedding_result.get("results") or [], start=1):
+                metadata = hit.get("metadata") or {}
+                pair_id = str(hit.get("pair_id") or metadata.get("pair_id") or "").strip()
+                if not pair_id:
+                    continue
+                embedding_similarity = _safe_float(hit.get("embedding_similarity"))
+                if embedding_similarity <= 0:
+                    continue
+                sample = samples_by_pair_id.get(pair_id)
+                source_file_id = str(metadata.get("source_file_id") or (sample or {}).get("source_file_id") or "")
+                hit_chat_type = str(metadata.get("chat_type") or (sample or {}).get("chat_type") or "")
+                source_bonus = 0.08 if preferred_source_file_id and source_file_id == preferred_source_file_id else 0.0
+                chat_type_bonus = 0.06 if preferred_chat_type and hit_chat_type == preferred_chat_type else 0.0
+                if preferred_chat_type and hit_chat_type and hit_chat_type != preferred_chat_type:
+                    chat_type_bonus -= 0.04
+
+                existing = by_pair_id.get(pair_id)
+                if existing:
+                    rule_similarity = _safe_float(existing.get("rule_similarity") or existing.get("similarity"))
+                    hybrid = max(
+                        rule_similarity,
+                        round(rule_similarity * 0.78 + embedding_similarity * 0.38 + source_bonus + chat_type_bonus, 4),
+                    )
+                    existing.update({
+                        "similarity": hybrid,
+                        "embedding_similarity": round(embedding_similarity, 4),
+                        "embedding_distance": hit.get("distance"),
+                        "embedding_rank": rank,
+                        "retrieval_source": "hybrid",
+                    })
+                    continue
+
+                quality_score = _safe_int(metadata.get("score") or (sample or {}).get("score"))
+                reply = (sample or {}).get("reply") or {}
+                context = (sample or {}).get("context") or {}
+                embedding_only_score = round(
+                    embedding_similarity * 0.78
+                    + source_bonus
+                    + chat_type_bonus
+                    + (quality_score / 1500),
+                    4,
+                )
+                item = {
+                    "sample_id": (sample or {}).get("sample_id") or pair_id,
+                    "pair_id": pair_id,
+                    "source_file_id": source_file_id,
+                    "chat_type": hit_chat_type,
+                    "similarity": embedding_only_score,
+                    "rule_similarity": 0.0,
+                    "embedding_similarity": round(embedding_similarity, 4),
+                    "embedding_distance": hit.get("distance"),
+                    "embedding_rank": rank,
+                    "retrieval_source": "embedding",
+                    "context_overlap": 0.0,
+                    "keyword_overlap": 0.0,
+                    "intent_bonus": 0.0,
+                    "chat_type_bonus": round(chat_type_bonus, 4),
+                    "source_bonus": round(source_bonus, 4),
+                    "quality_score": quality_score,
+                    "reply_length_bucket": reply.get("length_bucket") or metadata.get("length_bucket"),
+                    "reply_char_length": _safe_int(reply.get("char_length") or metadata.get("target_char_length")),
+                    "context_count": context.get("count") or metadata.get("context_turn_count"),
+                    "time_bucket": reply.get("time_bucket"),
+                    "score_reasons": ["embedding_hit"],
+                    "scene_label": metadata.get("scene_label"),
+                    "taxonomy": {
+                        "scope": metadata.get("scope"),
+                        "grounding_type": metadata.get("grounding_type"),
+                        "learning_value": metadata.get("learning_value"),
+                    },
+                }
+                by_pair_id[pair_id] = item
+                results.append(item)
+
+    results.sort(
+        key=lambda item: _retrieval_sort_key(
+            item,
+            preferred_source_file_id=preferred_source_file_id,
+            preferred_chat_type=preferred_chat_type,
+        )
+    )
     return {
         "ok": True,
         "run_id": run_path.name,
-        "raw_text_policy": "Historical text was read transiently for similarity only; no raw text is returned or persisted.",
+        "retrieval_strategy": "hybrid_rules_embedding" if embedding_status.get("ok") else "rules_only",
+        "embedding_status": embedding_status,
+        "raw_text_policy": "Historical text was read transiently for rule scoring only; embedding index stores no raw text.",
         "query_features": {
             "char_length": query_features["char_length"],
             "length_bucket": query_features["length_bucket"],
@@ -531,6 +684,7 @@ def format_style_debug_report(
         "Stage 5B-RAG 风格调试：",
         f"- run_id：{context.get('run_id')}",
         f"- readiness：{context.get('readiness')}",
+        f"- 检索策略：{context.get('retrieval_strategy') or 'rules_only'}",
         f"- 当前对象映射：{'已匹配 ' + str(mapping.get('source_file_id')) if mapping.get('matched') else '未匹配'} ({mapping.get('chat_type') or chat_type or 'unknown'})",
         f"- 问句：{features.get('has_question')}；类型：{intent.get('question_type')}",
         (
@@ -545,14 +699,23 @@ def format_style_debug_report(
         f"- 策略：{guidance.get('stance_instruction')}",
         f"- 长度：{guidance.get('length_instruction')}，目标约 {guidance.get('target_reply_length')} 字",
     ]
+    embedding_status = context.get("embedding_status") or {}
+    if embedding_status.get("enabled"):
+        lines.append(
+            "- 向量检索："
+            f"{'可用' if embedding_status.get('ok') else '不可用'}"
+            f"，model={embedding_status.get('model') or 'unknown'}"
+            f"，hits={embedding_status.get('result_count', 0)}"
+        )
 
     samples = context.get("similar_samples") or []
     if samples:
         lines.append("相似样本：")
         for index, item in enumerate(samples[:limit], start=1):
             lines.append(
-                f"{index}. sim={item.get('similarity')} text={item.get('context_overlap')} "
-                f"kw={item.get('keyword_overlap')} intent={item.get('intent_bonus')} "
+                f"{index}. sim={item.get('similarity')} rule={item.get('rule_similarity')} "
+                f"emb={item.get('embedding_similarity')} src={item.get('retrieval_source')} "
+                f"text={item.get('context_overlap')} kw={item.get('keyword_overlap')} intent={item.get('intent_bonus')} "
                 f"q={item.get('quality_score')} {item.get('chat_type')} "
                 f"{item.get('source_file_id')} reply_len={item.get('reply_char_length')}"
             )
@@ -565,7 +728,7 @@ def format_style_debug_report(
         for index, example in enumerate(examples[:limit], start=1):
             lines.append(
                 f"样本 {index}：sim={example.get('similarity')} q={example.get('quality_score')} "
-                f"{example.get('chat_type')} {example.get('source_file_id')}"
+                f"{example.get('chat_type')} {example.get('source_file_id')} src={example.get('retrieval_source')}"
             )
             for item in example.get("context") or []:
                 role = item.get("role") or "对方"
@@ -585,9 +748,16 @@ def format_similar_sample_results(result: Dict[str, Any]) -> str:
     lines = [
         "相似样本检索结果：",
         f"- run_id：{result.get('run_id')}",
+        f"- 检索策略：{result.get('retrieval_strategy') or 'rules_only'}",
         f"- 命中：{result.get('result_count', 0)} 条",
-        "- 原文策略：本地临时读取历史文本计算相似度，但不返回、不保存原文",
+        "- 原文策略：规则检索会本地临时读取历史文本；向量索引只存 embedding 和元数据",
     ]
+    embedding_status = result.get("embedding_status") or {}
+    if embedding_status.get("enabled"):
+        lines.append(
+            f"- 向量检索：{'可用' if embedding_status.get('ok') else '不可用'}，"
+            f"hits={embedding_status.get('result_count', 0)}"
+        )
     features = result.get("query_features") or {}
     lines.append(
         f"- 查询特征：{features.get('length_bucket')}，"
@@ -596,7 +766,8 @@ def format_similar_sample_results(result: Dict[str, Any]) -> str:
     )
     for index, item in enumerate(result.get("results") or [], start=1):
         lines.append(
-            f"{index}. sim={item.get('similarity')} q={item.get('quality_score')} "
+            f"{index}. sim={item.get('similarity')} rule={item.get('rule_similarity')} "
+            f"emb={item.get('embedding_similarity')} src={item.get('retrieval_source')} q={item.get('quality_score')} "
             f"{item.get('chat_type')} {item.get('source_file_id')} "
             f"reply_len={item.get('reply_char_length')} ctx={item.get('context_count')}"
         )
