@@ -189,8 +189,13 @@ def classify_reply_behavior(text: str, *, latest_message: str = "") -> Dict[str,
             result["label"] = "clarify"
             result["reasons"].append("safe_game_clarify")
         elif (
-            any(marker in compact for marker in ("段位", "几排", "几缺", "啥段", "什么段", "哪个服", "哪个区", "谁在"))
-            or compact.startswith(("啥", "咋说", "怎么说", "谁", "几个"))
+            len(compact) <= 10
+            and (
+                compact.startswith(("啥", "什么", "咋", "怎么", "谁", "几个", "几", "哪", "哪个"))
+                or compact.endswith(("吗", "呢"))
+                or "？" in cleaned
+                or "?" in cleaned
+            )
         ):
             result["label"] = "engage_probe"
             result["reasons"].append("game_engagement_probe")
@@ -482,24 +487,24 @@ def style_rerank_candidates(
         elif commitment_level == 2 and behavior.get("label") == "owner_state_commit":
             risk_penalty += 18
             risk_reasons.append("state_declaration_level2")
-        if len(text) >= 10 and text in history_texts:
+        compact_len = len(compact_candidate)
+        if compact_len >= 24 and text in history_texts:
             hygiene_penalty += 78
-            reasons.append("copied_history_exact")
-            hard_reject_reasons.append("copied_history_exact")
-        elif 3 <= len(text) < 10 and text in history_texts:
-            hygiene_penalty += 8
-            style_score += 4
-            reasons.append("reused_short_history_phrase")
-            persona_reasons.append("historical_short_phrase")
-        elif len(text) >= 10 and history_texts:
+            reasons.append("copied_long_history_exact")
+            hard_reject_reasons.append("copied_long_history_exact")
+        elif compact_len >= 2 and text in history_texts:
+            style_score += 6
+            reasons.append("reused_history_phrase")
+            persona_reasons.append("historical_phrase_reuse")
+        elif compact_len >= 32 and history_texts:
             similarity = max(
                 (_jaccard(_text_ngrams(text), _text_ngrams(target)) for target in history_texts),
                 default=0.0,
             )
-            if similarity >= 0.82:
-                hygiene_penalty += 35
-                reasons.append("copied_history_near")
-                hard_reject_reasons.append("copied_history_near")
+            if similarity >= 0.9:
+                hygiene_penalty += 55
+                reasons.append("copied_long_history_near")
+                hard_reject_reasons.append("copied_long_history_near")
         correction_delta, correction_reasons = candidate_correction_delta(text, correction_items)
         if correction_delta:
             style_score += correction_delta
