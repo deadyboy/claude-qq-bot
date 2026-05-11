@@ -42,7 +42,7 @@ ONEBOT_WS_URL=ws://127.0.0.1:6700
 
 # 中科大 LLM API 配置
 LLM_API_BASE=https://api.llm.ustc.edu.cn/v1
-LLM_API_KEY=sk-32FTdpTEiL24atPrZxO9yg
+LLM_API_KEY=your_api_key_here
 LLM_MODEL=qwen-chat
 
 # 会话配置

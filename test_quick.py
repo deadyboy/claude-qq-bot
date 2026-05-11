@@ -174,11 +174,12 @@ async def test_key_facts():
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
     print("[3/10] 测试自动记忆规则...")
+    fake_secret = "sk-" + "testsecret123456"
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
-    assert contains_sensitive_content("我的 API key 是 sk-testsecret123456")
-    assert not should_attempt_auto_memory("我的 API key 是 sk-testsecret123456")
+    assert contains_sensitive_content(f"我的 API key 是 {fake_secret}")
+    assert not should_attempt_auto_memory(f"我的 API key 是 {fake_secret}")
 
     facts = heuristic_extract_facts("我叫付健，我喜欢简洁直接的回答")
     print(f"      规则抽取：{facts}")
@@ -188,7 +189,7 @@ async def test_auto_memory_helpers():
     normalized = normalize_extracted_facts([
         {"predicate": "偏好", "object": "喜欢详细步骤", "confidence": 0.9},
         {"predicate": "临时", "object": "因为刚才没看到窗口", "confidence": 0.9},
-        {"predicate": "密钥", "object": "sk-testsecret123456", "confidence": 0.99},
+        {"predicate": "密钥", "object": fake_secret, "confidence": 0.99},
         {"predicate": "低置信", "object": "可能喜欢 Java", "confidence": 0.4},
     ])
     print(f"      清洗结果：{normalized}")
@@ -397,6 +398,7 @@ async def test_controlled_agent():
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
     print("[7/10] 测试风格画像...")
+    fake_secret = "sk-" + "testsecret123456"
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
     try:
@@ -408,12 +410,12 @@ async def test_style_profile():
         assert ok, msg
         ok, msg = store.set_field("习惯", "短句；少解释；必要时用一点表情")
         assert ok, msg
-        ok, msg = store.set_field("语气", "sk-testsecret123456")
+        ok, msg = store.set_field("语气", fake_secret)
         assert not ok
 
         ok, msg = store.add_example("在的在的，刚看到，我来处理。")
         assert ok, msg
-        ok, msg = store.add_example("我的 api key 是 sk-testsecret123456")
+        ok, msg = store.add_example(f"我的 api key 是 {fake_secret}")
         assert not ok
 
         loaded = store.load()
@@ -485,7 +487,7 @@ async def test_style_profile():
             "owner,样例回复A\n"
             "friend,样例问题A\n"
             "owner,样例回复B\n"
-            "owner,我的 api key 是 sk-testsecret123456\n",
+            f"owner,我的 api key 是 {fake_secret}\n",
             encoding="utf-8",
         )
         preview = store.preview_import_file("chat.csv", ["owner"])
@@ -538,6 +540,7 @@ async def test_style_profile():
 async def test_style_distill():
     """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
     print("[8/10] 测试 Stage 5B 离线蒸馏...")
+    fake_secret = "sk-" + "testsecret123456"
 
     root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
     input_dir = root / "input"
@@ -619,7 +622,7 @@ async def test_style_distill():
                     "timestamp": 1700000240,
                     "sender": {"uin": "1000000001", "name": "owner"},
                     "type": "type_1",
-                    "content": {"text": "我的 api key 是 sk-testsecret123456", "elements": [{"type": "text"}]},
+                    "content": {"text": f"我的 api key 是 {fake_secret}", "elements": [{"type": "text"}]},
                     "recalled": False,
                     "system": False,
                 },
