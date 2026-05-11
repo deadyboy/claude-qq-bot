@@ -6,6 +6,22 @@
     "self_uin": ""
   },
   "excluded_relationship_ids": [],
+  "element_types": {
+    "text_only": ["text", "reply", "at"],
+    "media_dependent": ["image", "pic", "picture", "face", "market_face", "mface", "emoji", "video", "record", "voice", "file", "forward", "json", "xml", "ark"],
+    "max_type_chars": 32
+  },
+  "text_quality": {
+    "useful_text_min_chars": 2,
+    "length_buckets": [
+      {"max": 2, "label": "1-2"},
+      {"max": 6, "label": "3-6"},
+      {"max": 12, "label": "7-12"},
+      {"max": 30, "label": "13-30"},
+      {"max": 80, "label": "31-80"}
+    ],
+    "default_length_bucket": "81+"
+  },
   "limits": {
     "max_index_samples": 5000,
     "max_reply_length": 280,
@@ -61,5 +77,354 @@
     "confirm": ["行", "可以", "好", "嗯", "对", "是", "ok", "OK", "收到", "没问题", "可以啊"]
   },
   "particle_pattern": "(吧|啊|呀|呢|嘛|呗|啦|哈|哇|哦|噢|欸|诶|草|笑死|绷不住)",
-  "ai_assistant_markers": ["有什么我可以帮", "我可以帮你", "随时准备协助", "刚上线", "好问题", "让我帮你", "让我来", "让我先", "让我仔细", "我发现了问题", "以下是", "整理如下", "方案 1", "方案1", "步骤", "总结一下", "已成功创建", "验证文件", "读取 transcript", "视觉描述", "OCR 文字", "OpenClaw", "Claude Code", "subagent", "skill", "web_fetch", "prompt", "API 调用", "模型", "代码块", "```"]
+  "ai_assistant_markers": ["有什么我可以帮", "有什么可以帮", "我可以帮你", "随时准备协助", "刚上线", "好问题", "让我帮你", "让我来", "让我先", "让我仔细", "我发现了问题", "以下是", "整理如下", "方案 1", "方案1", "步骤", "总结一下", "已成功创建", "验证文件", "读取 transcript", "视觉描述", "OCR 文字", "OpenClaw", "Claude Code", "subagent", "skill", "web_fetch", "prompt", "API 调用", "模型", "代码块", "```"],
+  "phrases": {
+    "observation": {
+      "short_min_chars": 2,
+      "short_max_chars": 14,
+      "ending_min_chars": 2,
+      "ending_max_chars": 4,
+      "template_max_chars": 24
+    },
+    "patterns": {
+      "rhetorical": "不.+吗|不是.+吗|怎么.+了|咋.+了|啥.+啊|哪.+了",
+      "digit_placeholder": "N"
+    },
+    "output": {
+      "default_top_limit": 30,
+      "top_scan_multiplier": 2,
+      "min_short_count": 2,
+      "high_freq_short_limit": 50,
+      "ending_limit": 40,
+      "particle_limit": 40,
+      "template_limit": 30,
+      "common_default_limit": 12,
+      "common_max_chars": 40
+    }
+  },
+  "turns": {
+    "text_features": {
+      "ngram_size": 2,
+      "keyword_min_alnum_chars": 2,
+      "keyword_min_chinese_ngram": 2,
+      "keyword_max_chinese_ngram": 3
+    },
+    "intent_similarity": {
+      "question_bonus": 0.03,
+      "question_type_bonus": 0.08,
+      "flag_bonus": 0.05,
+      "max_score": 0.28
+    },
+    "time": {
+      "timestamp_ms_threshold": 10000000000,
+      "timestamp_ms_divisor": 1000
+    },
+    "hash": {
+      "id_hash_chars": 12,
+      "turn_id_hash_chars": 20
+    },
+    "scene": {
+      "context_tail_turns": 4,
+      "group_direct_context_tail_turns": 3,
+      "private_long_min_chars": 80
+    },
+    "dialogue_pair": {
+      "min_score": 45,
+      "max_reply_multiplier": 2.0,
+      "private_multi_context_min_turns": 3,
+      "usable_length_min": 2,
+      "expressive_length_min": 8,
+      "expressive_length_max": 120,
+      "score": {
+        "has_other_turn_context": 42,
+        "no_other_turn_context": -30,
+        "private_turn_pair": 24,
+        "private_multi_turn_context": 10,
+        "group_turn_pair": 8,
+        "group_directed_context": 18,
+        "usable_target_length": 18,
+        "expressive_target": 8,
+        "merged_owner_turn": 8,
+        "long_or_formal_scene": 6,
+        "question_style": 3,
+        "punctuation_style": 3,
+        "contains_url": -18
+      }
+    },
+    "candidate_score": {
+      "quick_reply_seconds": 120,
+      "good_length_min": 3,
+      "good_length_max": 80,
+      "long_length_max": 280,
+      "multi_line_threshold": 3,
+      "multi_context_min": 2,
+      "multi_context_score_cap": 12,
+      "multi_context_score_per_turn": 2,
+      "score": {
+        "has_recent_other_context": 40,
+        "quick_reply": 8,
+        "no_recent_other_context": -25,
+        "private_chat": 18,
+        "group_chat": 6,
+        "explicit_reply": 18,
+        "mentions": 5,
+        "good_length": 16,
+        "long_but_usable": 8,
+        "weak_length": -15,
+        "contains_url": -20,
+        "multi_line": -8,
+        "style_marker_emoji": 3,
+        "question_style": 2,
+        "punctuation_style": 2
+      }
+    },
+    "style_patch": {
+      "short_avg_max": 10,
+      "medium_avg_max": 28,
+      "emoji_high_ratio": 0.35,
+      "emoji_medium_ratio": 0.08,
+      "short_ratio_threshold": 0.45,
+      "group_dominance_multiplier": 2.0,
+      "question_ratio_threshold": 0.08,
+      "ellipsis_ratio_threshold": 0.03,
+      "p90_percentile": 0.9
+    },
+    "relationship_labels": {
+      "low_evidence_max": 20,
+      "high_evidence_min": 1000,
+      "terse_avg_max": 8,
+      "brief_avg_max": 24,
+      "high_familiarity_owner_min": 800,
+      "high_familiarity_ratio_min": 0.25,
+      "active_private_owner_min": 100,
+      "active_group_ratio_min": 0.05,
+      "active_group_owner_min": 300,
+      "occasional_group_owner_min": 100,
+      "strong_context_candidates_min": 50,
+      "usable_context_candidates_min": 10,
+      "element_type_limit": 10
+    },
+    "evaluation": {
+      "strong_indexed_min": 1000,
+      "strong_source_min": 5,
+      "usable_indexed_min": 300,
+      "usable_source_min": 3,
+      "lora_min_pairs": 3000
+    },
+    "scene_profiles": {
+      "multi_context_threshold": 3,
+      "quick_reply_seconds": 120,
+      "sample_ref_limit": 12,
+      "group_brief_avg_max": 12,
+      "private_contextual_avg_min": 20,
+      "element_type_limit": 10,
+      "missing_delay_sentinel": 999999
+    }
+  },
+  "taxonomy": {
+    "phrase_terms": {
+      "default_limit": 80,
+      "global_limit": 200,
+      "relationship_limit": 120,
+      "min_chars": 2,
+      "max_chars": 24,
+      "relationship_term_min_chars": 3,
+      "relationship_term_limit": 8
+    },
+    "classification": {
+      "low_information_max_chars": 2,
+      "text_grounding_min_chars": 6,
+      "media_context_max_chars": 24,
+      "sft_score_min": 85,
+      "rag_score_min": 70,
+      "sft_reply_min_chars": 3,
+      "sft_reply_max_chars": 160,
+      "phrase_profile_reply_max_chars": 14,
+      "high_value_score_min": 95,
+      "medium_value_score_min": 75
+    },
+    "artifacts": {
+      "sft_context_tail_turns": 12,
+      "rerank_p90_percentile": 0.9,
+      "rerank_max_length_cap": 160,
+      "rerank_max_length_min": 12,
+      "rerank_max_length_padding": 8,
+      "rerank_relationship_limit": 100,
+      "rerank_scene_count_limit": 6
+    },
+    "hard_filters": {
+      "too_ai_like_markers": ["AI", "机器人", "助手", "无法", "我不能", "根据上下文"],
+      "too_formal_markers": ["您好", "请问", "非常抱歉", "感谢", "有什么可以帮"]
+    }
+  },
+  "generation": {
+    "retrieval_first": {
+      "default_candidate_count": 8,
+      "min_candidate_count": 3,
+      "max_candidate_count": 8,
+      "context_preview_chars": 1200,
+      "sample_limit": 8,
+      "sample_context_chars": 500,
+      "sample_target_chars": 300,
+      "llm_temperature": 0.8,
+      "rerank_input_limit": 12,
+      "target_id_preview_chars": 24,
+      "prompt_preview_chars": 2000
+    },
+    "profile_phrases": {
+      "min_chars": 2,
+      "max_chars": 16,
+      "exclude_prefixes": ["平均回复", "中位数"]
+    },
+    "punctuation": {
+      "short_max_chars": 8,
+      "line_match_bonus": 0.08
+    },
+    "shape": {
+      "micro_max_chars": 4,
+      "short_max_chars": 12,
+      "medium_max_chars": 32
+    },
+    "length_fit": {
+      "empty_penalty": -30,
+      "tolerance_min": 3.0,
+      "tolerance_max": 12.0,
+      "tolerance_ratio": 0.55,
+      "close_bonus": 18,
+      "far_penalty_cap": 24,
+      "far_penalty_scale": 1.8,
+      "ok_bonus": 12
+    },
+    "history_fit": {
+      "lexical_weight": 0.38,
+      "keyword_weight": 0.22,
+      "structure_weight": 0.18,
+      "length_weight": 0.1,
+      "frequency_weight": 0.12,
+      "style_scale": 46,
+      "scene_scale": 18,
+      "shape_scale": 22
+    },
+    "rerank": {
+      "default_target_max": 64,
+      "target_max_min": 16,
+      "target_max_cap": 160,
+      "target_max_multiplier": 3,
+      "history_target_limit": 24,
+      "base_style_score": 48,
+      "base_scene_score": 48,
+      "current_message_echo_penalty": 90,
+      "invalid_text_penalty": 90,
+      "too_long_penalty_cap": 36,
+      "structured_answer_penalty": 42,
+      "ai_like_penalty": 46,
+      "ai_marker_min_hits": 1,
+      "profile_phrase_base_bonus": 8,
+      "profile_phrase_each_bonus": 4,
+      "profile_phrase_bonus_cap": 18,
+      "structure_strong_threshold": 0.72,
+      "structure_strong_bonus": 8,
+      "structure_weak_threshold": 0.55,
+      "structure_weak_bonus": 4,
+      "no_punct_short_max_chars": 12,
+      "no_punct_short_bonus": 3,
+      "credential_risk_penalty": 90,
+      "exact_long_copy_min_chars": 24,
+      "exact_long_copy_penalty": 78,
+      "exact_short_copy_min_chars": 2,
+      "exact_short_copy_bonus": 10,
+      "near_copy_min_chars": 48,
+      "near_copy_threshold": 0.96,
+      "near_copy_penalty": 55,
+      "score_style_weight": 0.58,
+      "score_scene_weight": 0.28,
+      "score_base": 18,
+      "accepted_threshold": 45,
+      "sensitive_grant_patterns": ["(发|给|转|打).{0,6}(你|过去|过来)", "(你|直接).{0,4}(登|拿|用)"]
+    },
+    "raw_fewshot": {
+      "embedding_similarity_fallback": 0.43,
+      "pair_context_tail_turns": 6,
+      "context_max_lines": 3
+    }
+  },
+  "retrieval": {
+    "scene_inference": {
+      "private_emotional_latest_max_chars": 80,
+      "private_long_latest_min_chars": 80,
+      "private_long_context_min_lines": 3,
+      "private_long_context_min_chars": 160
+    },
+    "dialogue_pair": {
+      "default_limit": 8,
+      "context_tail_turns": 12,
+      "source_bonus": 0.35,
+      "scene_bonus": 0.22,
+      "fallback_bonus_without_source": 0.04,
+      "overlap_weight": 0.5,
+      "keyword_weight": 0.3,
+      "quality_divisor": 1200
+    },
+    "similarity": {
+      "max_query_chars": 500,
+      "context_tail_messages": 3,
+      "min_intent_bonus_without_text": 0.08,
+      "question_feature_bonus": 0.04,
+      "length_feature_bonus": 0.03,
+      "preferred_chat_type_bonus": 0.12,
+      "mismatched_chat_type_penalty": -0.08,
+      "preferred_source_bonus": 0.1,
+      "quality_divisor": 1000,
+      "overlap_weight": 0.58,
+      "keyword_weight": 0.28,
+      "embedding_limit_min": 20,
+      "embedding_limit_max": 100,
+      "embedding_limit_multiplier": 8,
+      "embedding_source_bonus": 0.08,
+      "embedding_chat_type_bonus": 0.06,
+      "embedding_chat_type_penalty": -0.04,
+      "hybrid_rule_weight": 0.78,
+      "hybrid_embedding_weight": 0.38,
+      "embedding_only_weight": 0.78,
+      "embedding_quality_divisor": 1500
+    },
+    "scene_match": {
+      "sample_count_weight": 0.01,
+      "avg_score_weight": 0.01,
+      "chat_type_bonus": 2.0,
+      "length_bucket_bonus": 1.5,
+      "question_scene_bonus": 0.4,
+      "emotional_scene_bonus": 0.4,
+      "pause_scene_bonus": 0.4
+    },
+    "guidance": {
+      "strong_similarity_threshold": 0.32,
+      "strong_context_overlap_threshold": 0.12,
+      "strong_keyword_overlap_threshold": 0.12,
+      "target_length_sample_count": 5,
+      "fallback_target_min": 6,
+      "fallback_target_max": 30,
+      "fallback_target_default": 12,
+      "length_buckets": [
+        {"max": 8, "instruction": "优先 3-8 字短回复"},
+        {"max": 18, "instruction": "优先 8-18 字中短回复"},
+        {"max": 40, "instruction": "优先 15-40 字，给一点上下文"}
+      ],
+      "default_length_instruction": "可以稍微展开，但保持口语化",
+      "high_risk_stance": "对方涉及账号、凭据、钱或严肃确认时，必须守住硬边界；可以用主人的语气拒绝或要求主人亲自确认。",
+      "reality_stance": "对方在问主人现实状态或可用性时，保留主人的口气，但把具体忙闲、位置、进度等事实模糊化。",
+      "default_stance": "优先从相似历史样本归纳主人通常如何接话；不要套用固定场景模板。"
+    }
+  },
+  "embedding": {
+    "model": "BAAI/bge-small-zh-v1.5",
+    "model_root": "F:\\ClaudeSpace2\\models",
+    "collection_name": "stage5b_rag_pool_bge_small_zh_v1_5",
+    "batch_size": 64,
+    "query_limit": 20,
+    "clean_index_text_chars": 1600,
+    "turn_text_chars": 500,
+    "max_query_results": 100,
+    "temp_dir": "F:\\ClaudeSpace2\\tmp"
+  }
 }

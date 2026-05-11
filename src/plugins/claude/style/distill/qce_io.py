@@ -76,11 +76,17 @@ PLAY_INVITE_RE = re.compile(DISTILL_SETTINGS.str_value("intent_patterns.play_inv
 QUESTION_TYPE_RULES = DISTILL_SETTINGS.dict_list("intent_question_type_priority")
 COMMITMENT_RISK_RULES = DISTILL_SETTINGS.dict_list("commitment_risk_rules")
 PARTICLE_RE = re.compile(DISTILL_SETTINGS.str_value("particle_pattern", r"(?!)"))
-TEXT_ONLY_ELEMENTS = {"text", "reply", "at"}
-MEDIA_DEPENDENT_ELEMENTS = {
-    "image", "pic", "picture", "face", "market_face", "mface", "emoji", "video",
-    "record", "voice", "file", "forward", "json", "xml", "ark",
-}
+TEXT_ONLY_ELEMENTS = set(DISTILL_SETTINGS.str_list("element_types.text_only", ("text", "reply", "at")))
+MEDIA_DEPENDENT_ELEMENTS = set(DISTILL_SETTINGS.str_list(
+    "element_types.media_dependent",
+    (
+        "image", "pic", "picture", "face", "market_face", "mface", "emoji", "video",
+        "record", "voice", "file", "forward", "json", "xml", "ark",
+    ),
+))
+ELEMENT_TYPE_MAX_CHARS = DISTILL_SETTINGS.int_value("element_types.max_type_chars", 32)
+USEFUL_TEXT_MIN_CHARS = DISTILL_SETTINGS.int_value("text_quality.useful_text_min_chars", 2)
+LENGTH_BUCKET_RULES = DISTILL_SETTINGS.dict_list("text_quality.length_buckets")
 
 TEXT_PLACEHOLDER_RE = re.compile(r"^\s*\[(?:图片|视频|语音|表情|文件|动画表情|转发消息).*\]\s*$")
 URL_RE = re.compile(r"https?://|www\.", flags=re.I)
@@ -203,7 +209,7 @@ def _element_types(message: Dict[str, Any]) -> List[str]:
     for element in _message_elements(message):
         text = str(element.get("type") or "").strip()
         if text:
-            types.append(text[:32])
+            types.append(text[:ELEMENT_TYPE_MAX_CHARS])
     return sorted(set(types))
 
 def _sender_uin(message: Dict[str, Any]) -> str:
@@ -227,24 +233,22 @@ def _is_useful_text(text: str) -> bool:
     if TEXT_PLACEHOLDER_RE.match(text):
         return False
     compact = re.sub(r"\s+", "", text)
-    if len(compact) < 2:
+    if len(compact) < USEFUL_TEXT_MIN_CHARS:
         return False
     if not re.search(r"[\w\u4e00-\u9fff]", compact):
         return False
     return True
 
 def _bucket_length(length: int) -> str:
-    if length <= 2:
-        return "1-2"
-    if length <= 6:
-        return "3-6"
-    if length <= 12:
-        return "7-12"
-    if length <= 30:
-        return "13-30"
-    if length <= 80:
-        return "31-80"
-    return "81+"
+    for rule in LENGTH_BUCKET_RULES:
+        label = str(rule.get("label") or "")
+        try:
+            max_chars = int(rule.get("max"))
+        except (TypeError, ValueError):
+            continue
+        if label and length <= max_chars:
+            return label
+    return DISTILL_SETTINGS.str_value("text_quality.default_length_bucket", "81+")
 
 def _contains_any(text: str, hints: Sequence[str]) -> bool:
     return any(hint in text for hint in hints)

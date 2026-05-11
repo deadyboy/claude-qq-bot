@@ -8,17 +8,110 @@ from .reports import *
 from .retrieval import *
 
 
+GEN_DEFAULT_CANDIDATE_COUNT = DISTILL_SETTINGS.int_value("generation.retrieval_first.default_candidate_count", 8)
+GEN_MIN_CANDIDATE_COUNT = DISTILL_SETTINGS.int_value("generation.retrieval_first.min_candidate_count", 3)
+GEN_MAX_CANDIDATE_COUNT = DISTILL_SETTINGS.int_value("generation.retrieval_first.max_candidate_count", 8)
+GEN_CONTEXT_PREVIEW_CHARS = DISTILL_SETTINGS.int_value("generation.retrieval_first.context_preview_chars", 1200)
+GEN_SAMPLE_LIMIT = DISTILL_SETTINGS.int_value("generation.retrieval_first.sample_limit", 8)
+GEN_SAMPLE_CONTEXT_CHARS = DISTILL_SETTINGS.int_value("generation.retrieval_first.sample_context_chars", 500)
+GEN_SAMPLE_TARGET_CHARS = DISTILL_SETTINGS.int_value("generation.retrieval_first.sample_target_chars", 300)
+GEN_LLM_TEMPERATURE = DISTILL_SETTINGS.float_value("generation.retrieval_first.llm_temperature", 0.8)
+GEN_RERANK_INPUT_LIMIT = DISTILL_SETTINGS.int_value("generation.retrieval_first.rerank_input_limit", 12)
+GEN_TARGET_ID_PREVIEW_CHARS = DISTILL_SETTINGS.int_value("generation.retrieval_first.target_id_preview_chars", 24)
+GEN_PROMPT_PREVIEW_CHARS = DISTILL_SETTINGS.int_value("generation.retrieval_first.prompt_preview_chars", 2000)
+
+PROFILE_PHRASE_MIN_CHARS = DISTILL_SETTINGS.int_value("generation.profile_phrases.min_chars", 2)
+PROFILE_PHRASE_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.profile_phrases.max_chars", 16)
+PROFILE_PHRASE_EXCLUDE_PREFIXES = DISTILL_SETTINGS.str_list("generation.profile_phrases.exclude_prefixes")
+PUNCT_SHORT_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.punctuation.short_max_chars", 8)
+STRUCTURE_LINE_MATCH_BONUS = DISTILL_SETTINGS.float_value("generation.punctuation.line_match_bonus", 0.08)
+SHAPE_MICRO_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.shape.micro_max_chars", 4)
+SHAPE_SHORT_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.shape.short_max_chars", 12)
+SHAPE_MEDIUM_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.shape.medium_max_chars", 32)
+
+LENGTH_EMPTY_PENALTY = DISTILL_SETTINGS.int_value("generation.length_fit.empty_penalty", -30)
+LENGTH_TOLERANCE_MIN = DISTILL_SETTINGS.float_value("generation.length_fit.tolerance_min", 3.0)
+LENGTH_TOLERANCE_MAX = DISTILL_SETTINGS.float_value("generation.length_fit.tolerance_max", 12.0)
+LENGTH_TOLERANCE_RATIO = DISTILL_SETTINGS.float_value("generation.length_fit.tolerance_ratio", 0.55)
+LENGTH_CLOSE_BONUS = DISTILL_SETTINGS.int_value("generation.length_fit.close_bonus", 18)
+LENGTH_FAR_PENALTY_CAP = DISTILL_SETTINGS.int_value("generation.length_fit.far_penalty_cap", 24)
+LENGTH_FAR_PENALTY_SCALE = DISTILL_SETTINGS.float_value("generation.length_fit.far_penalty_scale", 1.8)
+LENGTH_OK_BONUS = DISTILL_SETTINGS.int_value("generation.length_fit.ok_bonus", 12)
+
+HISTORY_FIT_LEXICAL_WEIGHT = DISTILL_SETTINGS.float_value("generation.history_fit.lexical_weight", 0.38)
+HISTORY_FIT_KEYWORD_WEIGHT = DISTILL_SETTINGS.float_value("generation.history_fit.keyword_weight", 0.22)
+HISTORY_FIT_STRUCTURE_WEIGHT = DISTILL_SETTINGS.float_value("generation.history_fit.structure_weight", 0.18)
+HISTORY_FIT_LENGTH_WEIGHT = DISTILL_SETTINGS.float_value("generation.history_fit.length_weight", 0.1)
+HISTORY_FIT_FREQUENCY_WEIGHT = DISTILL_SETTINGS.float_value("generation.history_fit.frequency_weight", 0.12)
+HISTORY_FIT_STYLE_SCALE = DISTILL_SETTINGS.float_value("generation.history_fit.style_scale", 46)
+HISTORY_FIT_SCENE_SCALE = DISTILL_SETTINGS.float_value("generation.history_fit.scene_scale", 18)
+HISTORY_SHAPE_SCALE = DISTILL_SETTINGS.float_value("generation.history_fit.shape_scale", 22)
+
+RERANK_DEFAULT_TARGET_MAX = DISTILL_SETTINGS.int_value("generation.rerank.default_target_max", 64)
+RERANK_TARGET_MAX_MIN = DISTILL_SETTINGS.int_value("generation.rerank.target_max_min", 16)
+RERANK_TARGET_MAX_CAP = DISTILL_SETTINGS.int_value("generation.rerank.target_max_cap", 160)
+RERANK_TARGET_MAX_MULTIPLIER = DISTILL_SETTINGS.float_value("generation.rerank.target_max_multiplier", 3)
+RERANK_HISTORY_TARGET_LIMIT = DISTILL_SETTINGS.int_value("generation.rerank.history_target_limit", 24)
+RERANK_BASE_STYLE_SCORE = DISTILL_SETTINGS.int_value("generation.rerank.base_style_score", 48)
+RERANK_BASE_SCENE_SCORE = DISTILL_SETTINGS.int_value("generation.rerank.base_scene_score", 48)
+RERANK_ECHO_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.current_message_echo_penalty", 90)
+RERANK_INVALID_TEXT_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.invalid_text_penalty", 90)
+RERANK_TOO_LONG_PENALTY_CAP = DISTILL_SETTINGS.int_value("generation.rerank.too_long_penalty_cap", 36)
+RERANK_STRUCTURED_ANSWER_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.structured_answer_penalty", 42)
+RERANK_AI_LIKE_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.ai_like_penalty", 46)
+RERANK_AI_MARKER_MIN_HITS = DISTILL_SETTINGS.int_value("generation.rerank.ai_marker_min_hits", 1)
+RERANK_PROFILE_PHRASE_BASE_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.profile_phrase_base_bonus", 8)
+RERANK_PROFILE_PHRASE_EACH_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.profile_phrase_each_bonus", 4)
+RERANK_PROFILE_PHRASE_BONUS_CAP = DISTILL_SETTINGS.int_value("generation.rerank.profile_phrase_bonus_cap", 18)
+RERANK_STRUCTURE_STRONG_THRESHOLD = DISTILL_SETTINGS.float_value("generation.rerank.structure_strong_threshold", 0.72)
+RERANK_STRUCTURE_STRONG_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.structure_strong_bonus", 8)
+RERANK_STRUCTURE_WEAK_THRESHOLD = DISTILL_SETTINGS.float_value("generation.rerank.structure_weak_threshold", 0.55)
+RERANK_STRUCTURE_WEAK_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.structure_weak_bonus", 4)
+RERANK_NO_PUNCT_SHORT_MAX_CHARS = DISTILL_SETTINGS.int_value("generation.rerank.no_punct_short_max_chars", 12)
+RERANK_NO_PUNCT_SHORT_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.no_punct_short_bonus", 3)
+RERANK_CREDENTIAL_RISK_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.credential_risk_penalty", 90)
+RERANK_EXACT_LONG_COPY_MIN_CHARS = DISTILL_SETTINGS.int_value("generation.rerank.exact_long_copy_min_chars", 24)
+RERANK_EXACT_LONG_COPY_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.exact_long_copy_penalty", 78)
+RERANK_EXACT_SHORT_COPY_MIN_CHARS = DISTILL_SETTINGS.int_value("generation.rerank.exact_short_copy_min_chars", 2)
+RERANK_EXACT_SHORT_COPY_BONUS = DISTILL_SETTINGS.int_value("generation.rerank.exact_short_copy_bonus", 10)
+RERANK_NEAR_COPY_MIN_CHARS = DISTILL_SETTINGS.int_value("generation.rerank.near_copy_min_chars", 48)
+RERANK_NEAR_COPY_THRESHOLD = DISTILL_SETTINGS.float_value("generation.rerank.near_copy_threshold", 0.96)
+RERANK_NEAR_COPY_PENALTY = DISTILL_SETTINGS.int_value("generation.rerank.near_copy_penalty", 55)
+RERANK_SCORE_STYLE_WEIGHT = DISTILL_SETTINGS.float_value("generation.rerank.score_style_weight", 0.58)
+RERANK_SCORE_SCENE_WEIGHT = DISTILL_SETTINGS.float_value("generation.rerank.score_scene_weight", 0.28)
+RERANK_SCORE_BASE = DISTILL_SETTINGS.float_value("generation.rerank.score_base", 18)
+RERANK_ACCEPTED_THRESHOLD = DISTILL_SETTINGS.int_value("generation.rerank.accepted_threshold", 45)
+RERANK_SENSITIVE_GRANT_PATTERNS = tuple(
+    re.compile(pattern) for pattern in DISTILL_SETTINGS.str_list("generation.rerank.sensitive_grant_patterns")
+)
+RAW_FEWSHOT_EMBEDDING_SIMILARITY_FALLBACK = DISTILL_SETTINGS.float_value("generation.raw_fewshot.embedding_similarity_fallback", 0.43)
+RAW_FEWSHOT_PAIR_CONTEXT_TAIL_TURNS = DISTILL_SETTINGS.int_value("generation.raw_fewshot.pair_context_tail_turns", 6)
+RAW_FEWSHOT_CONTEXT_MAX_LINES = DISTILL_SETTINGS.int_value("generation.raw_fewshot.context_max_lines", 3)
+
+
+def _candidate_ai_marker_hits(text: str) -> int:
+    raw = str(text or "")
+    compact = _compact_reply_text(raw)
+    lowered = raw.lower()
+    hits = 0
+    for marker in AI_ASSISTANT_MARKERS:
+        marker_text = str(marker or "").strip()
+        if marker_text and (marker_text.lower() in lowered or marker_text in compact):
+            hits += 1
+    return hits
+
+
 def build_retrieval_first_prompt(
     latest_message: str,
     *,
     current_context: str | Sequence[Dict[str, Any]] | None = None,
     retrieval: Dict[str, Any] | None = None,
     style_skill_context: Dict[str, Any] | None = None,
-    candidate_count: int = 8,
+    candidate_count: int = GEN_DEFAULT_CANDIDATE_COUNT,
     include_raw_samples: bool = False,
 ) -> str:
     retrieval = retrieval or {}
-    count = max(3, min(8, int(candidate_count or 8)))
+    count = max(GEN_MIN_CANDIDATE_COUNT, min(GEN_MAX_CANDIDATE_COUNT, int(candidate_count or GEN_DEFAULT_CANDIDATE_COUNT)))
     lines = [
         f"你在生成主人聊天草稿。只输出 {count} 条候选回复，JSON 数组字符串，每条只含回复正文。",
         "要求：像真实聊天，不要像 AI 助手；不要解释；不要自称机器人；不要编造主人现实状态或承诺。",
@@ -31,14 +124,14 @@ def build_retrieval_first_prompt(
     context_text = _normalize_current_context(current_context, latest_message)
     if context_text:
         lines.append("当前聊天上下文：")
-        lines.append(context_text[:1200])
+        lines.append(context_text[:GEN_CONTEXT_PREVIEW_CHARS])
     samples = retrieval.get("results") or []
     if samples:
         if include_raw_samples:
             lines.append("相似真实样本（已授权原句 few-shot）：")
         else:
             lines.append("相似样本元数据（未授权原句 few-shot，不含历史原文）：")
-        for index, item in enumerate(samples[:8], start=1):
+        for index, item in enumerate(samples[:GEN_SAMPLE_LIMIT], start=1):
             taxonomy = item.get("taxonomy") or {}
             target = (item.get("target") or {})
             lines.append(
@@ -50,9 +143,9 @@ def build_retrieval_first_prompt(
                 sample_context = _turns_text(item.get("context") or [])
                 target_text = target.get("text") or ""
                 if sample_context:
-                    lines.append("历史上下文：" + sample_context[:500])
+                    lines.append("历史上下文：" + sample_context[:GEN_SAMPLE_CONTEXT_CHARS])
                 if target_text:
-                    lines.append("主人真实回复：" + str(target_text)[:300])
+                    lines.append("主人真实回复：" + str(target_text)[:GEN_SAMPLE_TARGET_CHARS])
     lines.append(f"生成 {count} 条候选，彼此要有差异，但都保持口语、自然、短。")
     return "\n".join(lines)
 
@@ -75,12 +168,15 @@ def _profile_phrase_set(style_profile: Dict[str, Any] | None) -> set[str]:
         return phrases
     for item in style_profile.get("common_phrases") or []:
         text = _compact_reply_text(str(item or ""))
-        if 2 <= len(text) <= 16:
+        if PROFILE_PHRASE_MIN_CHARS <= len(text) <= PROFILE_PHRASE_MAX_CHARS:
             phrases.add(text)
     for item in style_profile.get("habits") or []:
         for part in re.split(r"[、,，；;:\s]+", str(item or "")):
             text = _compact_reply_text(part)
-            if 2 <= len(text) <= 16 and not text.startswith(("平均回复", "中位数")):
+            if (
+                PROFILE_PHRASE_MIN_CHARS <= len(text) <= PROFILE_PHRASE_MAX_CHARS
+                and not text.startswith(PROFILE_PHRASE_EXCLUDE_PREFIXES)
+            ):
                 phrases.add(text)
     return phrases
 
@@ -95,7 +191,7 @@ def _punctuation_signature(text: str) -> Dict[str, Any]:
         "ellipsis": "..." in raw or "…" in raw,
         "wave": "~" in raw or "～" in raw,
         "line_count": max(1, raw.count("\n") + 1),
-        "short": len(compact) <= 8,
+        "short": len(compact) <= PUNCT_SHORT_MAX_CHARS,
     }
 
 
@@ -106,23 +202,23 @@ def _structural_similarity(left: str, right: str) -> float:
     matches = sum(1 for key in keys if left_sig.get(key) == right_sig.get(key))
     score = matches / max(1, len(keys))
     if left_sig["line_count"] == right_sig["line_count"]:
-        score += 0.08
+        score += STRUCTURE_LINE_MATCH_BONUS
     return min(1.0, score)
 
 
 def _length_fit_score(text: str, target_length: float | None, target_max: int) -> tuple[int, str]:
     compact_len = len(_compact_reply_text(text))
     if compact_len <= 0:
-        return -30, "empty_length"
+        return LENGTH_EMPTY_PENALTY, "empty_length"
     if target_length and target_length > 0:
         diff = abs(compact_len - float(target_length))
-        tolerance = max(3.0, min(12.0, float(target_length) * 0.55))
+        tolerance = max(LENGTH_TOLERANCE_MIN, min(LENGTH_TOLERANCE_MAX, float(target_length) * LENGTH_TOLERANCE_RATIO))
         if diff <= tolerance:
-            return 18, "length_close_to_profile"
-        return -min(24, int(round((diff - tolerance) * 1.8))), "length_far_from_profile"
+            return LENGTH_CLOSE_BONUS, "length_close_to_profile"
+        return -min(LENGTH_FAR_PENALTY_CAP, int(round((diff - tolerance) * LENGTH_FAR_PENALTY_SCALE))), "length_far_from_profile"
     if 2 <= compact_len <= target_max:
-        return 12, "length_ok"
-    return -min(24, abs(compact_len - target_max)), "length_off"
+        return LENGTH_OK_BONUS, "length_ok"
+    return -min(LENGTH_FAR_PENALTY_CAP, abs(compact_len - target_max)), "length_off"
 
 
 def _shape_label(text: str) -> str:
@@ -140,11 +236,11 @@ def _shape_label(text: str) -> str:
     else:
         mood = "plain"
     length = len(compact)
-    if length <= 4:
+    if length <= SHAPE_MICRO_MAX_CHARS:
         bucket = "micro"
-    elif length <= 12:
+    elif length <= SHAPE_SHORT_MAX_CHARS:
         bucket = "short"
-    elif length <= 32:
+    elif length <= SHAPE_MEDIUM_MAX_CHARS:
         bucket = "medium"
     else:
         bucket = "long"
@@ -161,9 +257,8 @@ def _grants_sensitive_request(latest_message: str, candidate: str) -> bool:
     if contains_sensitive_content(candidate):
         return True
     compact = _compact_reply_text(candidate)
-    return bool(
-        re.search(r"(发|给|转|打).{0,6}(你|过去|过来)", compact)
-        or re.search(r"(你|直接).{0,4}(登|拿|用)", compact)
+    return any(
+        pattern.search(compact) for pattern in RERANK_SENSITIVE_GRANT_PATTERNS
     )
 
 
@@ -247,7 +342,7 @@ def _historical_behavior_delta(
     prop = float(proportions.get(label) or 0.0)
     if prop <= 0:
         return 0, f"history_shape_unseen:{label}"
-    return int(round(22 * prop)), f"history_shape_match:{label}:{prop:.2f}"
+    return int(round(HISTORY_SHAPE_SCALE * prop)), f"history_shape_match:{label}:{prop:.2f}"
 
 
 def _history_fit(candidate: str, historical_targets: Sequence[str]) -> Dict[str, Any]:
@@ -287,7 +382,14 @@ def _history_fit(candidate: str, historical_targets: Sequence[str]) -> Dict[str,
         keyword = _jaccard(candidate_keywords, _keyword_tokens(target_text))
         structure = _structural_similarity(candidate_text, target_text)
         length = max(0.0, 1.0 - abs(candidate_len - target_len) / max(candidate_len, target_len, 1))
-        score = round(lexical * 0.38 + keyword * 0.22 + structure * 0.18 + length * 0.1 + frequency * 0.12, 4)
+        score = round(
+            lexical * HISTORY_FIT_LEXICAL_WEIGHT
+            + keyword * HISTORY_FIT_KEYWORD_WEIGHT
+            + structure * HISTORY_FIT_STRUCTURE_WEIGHT
+            + length * HISTORY_FIT_LENGTH_WEIGHT
+            + frequency * HISTORY_FIT_FREQUENCY_WEIGHT,
+            4,
+        )
         if score > best["score"]:
             best = {
                 "score": score,
@@ -321,9 +423,12 @@ def style_rerank_candidates(
     if max_length is not None:
         target_max = max(1, int(max_length))
     elif target_length and float(target_length) > 0:
-        target_max = max(16, min(160, int(round(float(target_length) * 3))))
+        target_max = max(
+            RERANK_TARGET_MAX_MIN,
+            min(RERANK_TARGET_MAX_CAP, int(round(float(target_length) * RERANK_TARGET_MAX_MULTIPLIER))),
+        )
     else:
-        target_max = 64
+        target_max = RERANK_DEFAULT_TARGET_MAX
     correction_items = list(corrections or [])
     latest_intent = detect_message_intent(latest_message) if latest_message else {}
     commitment_level, commitment_label = _commitment_risk(latest_intent)
@@ -331,7 +436,7 @@ def style_rerank_candidates(
         re.sub(r"\s+", " ", str(item or "")).strip()
         for item in (historical_targets or [])
         if str(item or "").strip()
-    ][:24]
+    ][:RERANK_HISTORY_TARGET_LIMIT]
     behavior_distribution = historical_behavior_distribution(history_texts, latest_message=latest_message)
     profile_phrases = _profile_phrase_set(style_profile)
     ranked = []
@@ -346,8 +451,8 @@ def style_rerank_candidates(
                 pass
         if not text:
             continue
-        style_score = 48
-        scene_score = 48
+        style_score = RERANK_BASE_STYLE_SCORE
+        scene_score = RERANK_BASE_SCENE_SCORE
         risk_penalty = 0
         hygiene_penalty = 0
         reasons = []
@@ -358,11 +463,11 @@ def style_rerank_candidates(
         compact_latest = _compact_reply_text(latest_message)
         compact_candidate = _compact_reply_text(text)
         if compact_latest and compact_candidate == compact_latest:
-            hygiene_penalty += 90
+            hygiene_penalty += RERANK_ECHO_PENALTY
             reasons.append("copied_current_message")
             hard_reject_reasons.append("copied_current_message")
         if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
-            hygiene_penalty += 90
+            hygiene_penalty += RERANK_INVALID_TEXT_PENALTY
             reasons.append("invalid_text")
             hard_reject_reasons.append("invalid_text")
         length_delta, length_reason = _length_fit_score(text, target_length, target_max)
@@ -372,25 +477,32 @@ def style_rerank_candidates(
         else:
             reasons.append(length_reason)
         if len(text) > target_max:
-            excess = min(36, len(text) - target_max)
+            excess = min(RERANK_TOO_LONG_PENALTY_CAP, len(text) - target_max)
             hygiene_penalty += excess
             reasons.append("too_long")
         if re.search(r"(^|\n)\s*(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+)", text):
-            hygiene_penalty += 42
+            hygiene_penalty += RERANK_STRUCTURED_ANSWER_PENALTY
             reasons.append("structured_answer")
             hard_reject_reasons.append("structured_answer")
+        ai_marker_hits = _candidate_ai_marker_hits(text)
+        if is_ai_assistant_generated_text(text) or ai_marker_hits >= RERANK_AI_MARKER_MIN_HITS:
+            hygiene_penalty += RERANK_AI_LIKE_PENALTY
+            reasons.append("ai_assistant_flavor")
         phrase_hits = [
             phrase for phrase in profile_phrases
             if phrase and (phrase in compact_candidate or compact_candidate in phrase)
         ][:3]
         if phrase_hits:
-            style_score += min(18, 8 + len(phrase_hits) * 4)
+            style_score += min(
+                RERANK_PROFILE_PHRASE_BONUS_CAP,
+                RERANK_PROFILE_PHRASE_BASE_BONUS + len(phrase_hits) * RERANK_PROFILE_PHRASE_EACH_BONUS,
+            )
             persona_reasons.append("phrase_overlap:" + "/".join(phrase_hits))
         history_fit = _history_fit(text, history_texts)
         if history_fit["score"] > 0:
-            history_delta = int(round(float(history_fit["score"]) * 46))
+            history_delta = int(round(float(history_fit["score"]) * HISTORY_FIT_STYLE_SCALE))
             style_score += history_delta
-            scene_score += int(round(float(history_fit["score"]) * 18))
+            scene_score += int(round(float(history_fit["score"]) * HISTORY_FIT_SCENE_SCALE))
             persona_reasons.append(
                 "history_fit:"
                 f"{history_fit['score']:.2f}/lex={history_fit['lexical']:.2f}"
@@ -399,17 +511,17 @@ def style_rerank_candidates(
             )
         if history_texts:
             structure_match = max((_structural_similarity(text, target) for target in history_texts), default=0.0)
-            if structure_match >= 0.72:
-                style_score += 8
+            if structure_match >= RERANK_STRUCTURE_STRONG_THRESHOLD:
+                style_score += RERANK_STRUCTURE_STRONG_BONUS
                 persona_reasons.append("structure_like_history")
-            elif structure_match >= 0.55:
-                style_score += 4
+            elif structure_match >= RERANK_STRUCTURE_WEAK_THRESHOLD:
+                style_score += RERANK_STRUCTURE_WEAK_BONUS
                 persona_reasons.append("structure_somewhat_like_history")
-        if _punctuation_signature(text).get("no_punct") and len(compact_candidate) <= 12:
-            style_score += 3
+        if _punctuation_signature(text).get("no_punct") and len(compact_candidate) <= RERANK_NO_PUNCT_SHORT_MAX_CHARS:
+            style_score += RERANK_NO_PUNCT_SHORT_BONUS
             persona_reasons.append("chat_like_no_punct")
         if _grants_sensitive_request(latest_message, text):
-            risk_penalty += 90
+            risk_penalty += RERANK_CREDENTIAL_RISK_PENALTY
             reasons.append("credential_share_risk")
             risk_reasons.append("credential_share_risk")
             hard_reject_reasons.append("credential_share_risk")
@@ -423,30 +535,36 @@ def style_rerank_candidates(
             scene_score += behavior_delta
             scene_reasons.append(behavior_reason)
         compact_len = len(compact_candidate)
-        if compact_len >= 24 and text in history_texts:
-            hygiene_penalty += 78
+        if compact_len >= RERANK_EXACT_LONG_COPY_MIN_CHARS and text in history_texts:
+            hygiene_penalty += RERANK_EXACT_LONG_COPY_PENALTY
             reasons.append("copied_long_history_exact")
             hard_reject_reasons.append("copied_long_history_exact")
-        elif compact_len >= 2 and text in history_texts:
-            style_score += 10
+        elif compact_len >= RERANK_EXACT_SHORT_COPY_MIN_CHARS and text in history_texts:
+            style_score += RERANK_EXACT_SHORT_COPY_BONUS
             reasons.append("reused_history_phrase")
             persona_reasons.append("historical_phrase_reuse")
-        elif compact_len >= 48 and history_texts:
+        elif compact_len >= RERANK_NEAR_COPY_MIN_CHARS and history_texts:
             similarity = max(
                 (_jaccard(_text_ngrams(text), _text_ngrams(target)) for target in history_texts),
                 default=0.0,
             )
-            if similarity >= 0.96:
-                hygiene_penalty += 55
+            if similarity >= RERANK_NEAR_COPY_THRESHOLD:
+                hygiene_penalty += RERANK_NEAR_COPY_PENALTY
                 reasons.append("copied_long_history_near")
                 hard_reject_reasons.append("copied_long_history_near")
         correction_delta, correction_reasons = candidate_correction_delta(text, correction_items)
         if correction_delta:
             style_score += correction_delta
             reasons.extend(correction_reasons)
-        score = int(round(style_score * 0.58 + scene_score * 0.28 + 18 - risk_penalty - hygiene_penalty))
+        score = int(round(
+            style_score * RERANK_SCORE_STYLE_WEIGHT
+            + scene_score * RERANK_SCORE_SCENE_WEIGHT
+            + RERANK_SCORE_BASE
+            - risk_penalty
+            - hygiene_penalty
+        ))
         hard_reject = bool(hard_reject_reasons)
-        accepted = score >= 45 and not hard_reject
+        accepted = score >= RERANK_ACCEPTED_THRESHOLD and not hard_reject
         ranked.append({
             "text": text,
             "score": score,
@@ -492,7 +610,7 @@ async def generate_retrieval_first_reply_candidates(
         run_dir=run_dir,
         chat_type=chat_type,
         target_id=target_id,
-        limit=8,
+        limit=GEN_DEFAULT_CANDIDATE_COUNT,
     )
     if not retrieval.get("ok"):
         return retrieval
@@ -507,14 +625,14 @@ async def generate_retrieval_first_reply_candidates(
         current_context=current_context,
         retrieval=retrieval,
         style_skill_context=style_skill_context,
-        candidate_count=8,
+        candidate_count=GEN_DEFAULT_CANDIDATE_COUNT,
         include_raw_samples=include_raw_samples,
     )
     from .api import llm_client
     raw = await llm_client.chat(
         messages=[{"role": "user", "content": prompt}],
-        system_prompt="你只输出 JSON 数组字符串，数组里 8 个中文聊天候选回复。",
-        temperature=0.8,
+        system_prompt=f"你只输出 JSON 数组字符串，数组里 {GEN_DEFAULT_CANDIDATE_COUNT} 个中文聊天候选回复。",
+        temperature=GEN_LLM_TEMPERATURE,
     )
     try:
         parsed = json.loads(raw)
@@ -541,7 +659,7 @@ async def generate_retrieval_first_reply_candidates(
         if isinstance(item, dict)
     ]
     reranked = style_rerank_candidates(
-        candidates[:12],
+        candidates[:GEN_RERANK_INPUT_LIMIT],
         scene_label=str(retrieval.get("scene_label") or ""),
         corrections=style_skill_context.get("corrections") or [],
         historical_targets=historical_targets,
@@ -560,10 +678,10 @@ async def generate_retrieval_first_reply_candidates(
             "enabled": bool(style_skill_context.get("enabled")),
             "relationship_profile_found": bool(style_skill_context.get("relationship_profile_found")),
             "correction_hit_count": int(style_skill_context.get("correction_hit_count") or 0),
-            "target_id": str(target_id or "")[:24],
+            "target_id": str(target_id or "")[:GEN_TARGET_ID_PREVIEW_CHARS],
         },
         "candidates": reranked,
-        "prompt_preview": prompt[:2000],
+        "prompt_preview": prompt[:GEN_PROMPT_PREVIEW_CHARS],
     }
 
 def _clean_raw_fewshot_text(text: str) -> str:
@@ -605,13 +723,13 @@ def _build_raw_few_shot_examples(
         embedding_similarity = _safe_float(result.get("embedding_similarity"))
         if (
             _safe_float(result.get("similarity")) < MIN_RAW_FEWSHOT_SIMILARITY
-            and embedding_similarity < 0.43
+            and embedding_similarity < RAW_FEWSHOT_EMBEDDING_SIMILARITY_FALLBACK
         ):
             continue
         if (
             _safe_float(result.get("context_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
             and _safe_float(result.get("keyword_overlap")) < MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD
-            and embedding_similarity < 0.43
+            and embedding_similarity < RAW_FEWSHOT_EMBEDDING_SIMILARITY_FALLBACK
         ):
             continue
         if preferred_chat_type and result.get("chat_type") != preferred_chat_type:
@@ -631,7 +749,7 @@ def _build_raw_few_shot_examples(
             if not pair:
                 continue
             context_lines = []
-            for turn in (pair.get("context") or [])[-6:]:
+            for turn in (pair.get("context") or [])[-RAW_FEWSHOT_PAIR_CONTEXT_TAIL_TURNS:]:
                 if not isinstance(turn, dict):
                     continue
                 role = str(turn.get("role") or "")
@@ -642,8 +760,8 @@ def _build_raw_few_shot_examples(
                     continue
                 label = "主人" if role == "self" else "对方"
                 context_lines.append({"role": label, "text": text})
-            if len(context_lines) > 3:
-                context_lines = context_lines[-3:]
+            if len(context_lines) > RAW_FEWSHOT_CONTEXT_MAX_LINES:
+                context_lines = context_lines[-RAW_FEWSHOT_CONTEXT_MAX_LINES:]
             target = pair.get("target") if isinstance(pair.get("target"), dict) else {}
             owner_reply = _clean_raw_fewshot_text(target.get("text") or "\n".join(target.get("raw_texts") or []))
             if not owner_reply or not context_lines:
@@ -687,8 +805,8 @@ def _build_raw_few_shot_examples(
                 continue
             label = "主人" if role == "self" else "对方"
             context_lines.append({"role": label, "text": text})
-        if len(context_lines) > 3:
-            context_lines = context_lines[-3:]
+        if len(context_lines) > RAW_FEWSHOT_CONTEXT_MAX_LINES:
+            context_lines = context_lines[-RAW_FEWSHOT_CONTEXT_MAX_LINES:]
 
         reply_ref = sample.get("reply") or {}
         reply_texts = []

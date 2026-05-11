@@ -5,7 +5,37 @@ from .phrases import *
 from .turns import *
 
 
-def _phrase_terms(section: Dict[str, Any], *, limit: int = 80) -> set[str]:
+TAXONOMY_PHRASE_LIMIT_DEFAULT = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.default_limit", 80)
+TAXONOMY_GLOBAL_PHRASE_LIMIT = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.global_limit", 200)
+TAXONOMY_RELATIONSHIP_PHRASE_LIMIT = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.relationship_limit", 120)
+TAXONOMY_PHRASE_MIN_CHARS = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.min_chars", 2)
+TAXONOMY_PHRASE_MAX_CHARS = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.max_chars", 24)
+TAXONOMY_RELATIONSHIP_TERM_MIN_CHARS = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.relationship_term_min_chars", 3)
+TAXONOMY_RELATIONSHIP_TERM_LIMIT = DISTILL_SETTINGS.int_value("taxonomy.phrase_terms.relationship_term_limit", 8)
+
+TAXONOMY_LOW_INFORMATION_MAX_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.low_information_max_chars", 2)
+TAXONOMY_TEXT_GROUNDING_MIN_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.text_grounding_min_chars", 6)
+TAXONOMY_MEDIA_CONTEXT_MAX_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.media_context_max_chars", 24)
+TAXONOMY_SFT_SCORE_MIN = DISTILL_SETTINGS.int_value("taxonomy.classification.sft_score_min", 85)
+TAXONOMY_RAG_SCORE_MIN = DISTILL_SETTINGS.int_value("taxonomy.classification.rag_score_min", 70)
+TAXONOMY_SFT_REPLY_MIN_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.sft_reply_min_chars", 3)
+TAXONOMY_SFT_REPLY_MAX_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.sft_reply_max_chars", 160)
+TAXONOMY_PHRASE_PROFILE_REPLY_MAX_CHARS = DISTILL_SETTINGS.int_value("taxonomy.classification.phrase_profile_reply_max_chars", 14)
+TAXONOMY_HIGH_VALUE_SCORE_MIN = DISTILL_SETTINGS.int_value("taxonomy.classification.high_value_score_min", 95)
+TAXONOMY_MEDIUM_VALUE_SCORE_MIN = DISTILL_SETTINGS.int_value("taxonomy.classification.medium_value_score_min", 75)
+
+TAXONOMY_SFT_CONTEXT_TAIL_TURNS = DISTILL_SETTINGS.int_value("taxonomy.artifacts.sft_context_tail_turns", 12)
+TAXONOMY_RERANK_P90_PERCENTILE = DISTILL_SETTINGS.float_value("taxonomy.artifacts.rerank_p90_percentile", 0.9)
+TAXONOMY_RERANK_MAX_LENGTH_CAP = DISTILL_SETTINGS.int_value("taxonomy.artifacts.rerank_max_length_cap", 160)
+TAXONOMY_RERANK_MAX_LENGTH_MIN = DISTILL_SETTINGS.int_value("taxonomy.artifacts.rerank_max_length_min", 12)
+TAXONOMY_RERANK_MAX_LENGTH_PADDING = DISTILL_SETTINGS.int_value("taxonomy.artifacts.rerank_max_length_padding", 8)
+TAXONOMY_RERANK_RELATIONSHIP_LIMIT = DISTILL_SETTINGS.int_value("taxonomy.artifacts.rerank_relationship_limit", 100)
+TAXONOMY_RERANK_SCENE_COUNT_LIMIT = DISTILL_SETTINGS.int_value("taxonomy.artifacts.rerank_scene_count_limit", 6)
+TAXONOMY_HARD_AI_MARKERS = DISTILL_SETTINGS.str_list("taxonomy.hard_filters.too_ai_like_markers")
+TAXONOMY_HARD_FORMAL_MARKERS = DISTILL_SETTINGS.str_list("taxonomy.hard_filters.too_formal_markers")
+
+
+def _phrase_terms(section: Dict[str, Any], *, limit: int = TAXONOMY_PHRASE_LIMIT_DEFAULT) -> set[str]:
     terms: set[str] = set()
     for field in (
         "high_freq_short_replies",
@@ -15,17 +45,17 @@ def _phrase_terms(section: Dict[str, Any], *, limit: int = 80) -> set[str]:
     ):
         for item in section.get(field) or []:
             text = str((item or {}).get("text") or "").strip()
-            if 2 <= len(text) <= 24 and not contains_sensitive_content(text):
+            if TAXONOMY_PHRASE_MIN_CHARS <= len(text) <= TAXONOMY_PHRASE_MAX_CHARS and not contains_sensitive_content(text):
                 terms.add(text)
             if len(terms) >= limit:
                 return terms
     return terms
 
 def _relationship_phrase_lookup(phrase_profile: Dict[str, Any]) -> Dict[str, set[str]]:
-    global_terms = _phrase_terms(phrase_profile.get("global") or {}, limit=200)
+    global_terms = _phrase_terms(phrase_profile.get("global") or {}, limit=TAXONOMY_GLOBAL_PHRASE_LIMIT)
     lookup: Dict[str, set[str]] = {}
     for key, section in (phrase_profile.get("per_relationship") or {}).items():
-        terms = _phrase_terms(section or {}, limit=120)
+        terms = _phrase_terms(section or {}, limit=TAXONOMY_RELATIONSHIP_PHRASE_LIMIT)
         relationship_only = {term for term in terms if term not in global_terms}
         if relationship_only:
             lookup[str(key)] = relationship_only
@@ -49,7 +79,7 @@ def _pair_context_text(pair: Dict[str, Any], *, roles: set[str] | None = None) -
 
 def _is_low_information_reply(text: str) -> bool:
     compact = re.sub(r"\s+", "", str(text or ""))
-    if len(compact) <= 2:
+    if len(compact) <= TAXONOMY_LOW_INFORMATION_MAX_CHARS:
         return True
     return bool(re.fullmatch(r"[?？!！.。,…，、~～哈嗯啊哦额]+", compact))
 
@@ -73,17 +103,17 @@ def _classify_learning_pair(
     source_labels = set(source_profile.get("labels") or [])
     context_media_turns = sum(1 for turn in context_turns if _turn_media_elements(turn))
     target_media_elements = _turn_media_elements(pair.get("target") or {})
-    context_has_text_grounding = len(re.sub(r"\s+", "", other_context_text)) >= 6
+    context_has_text_grounding = len(re.sub(r"\s+", "", other_context_text)) >= TAXONOMY_TEXT_GROUNDING_MIN_CHARS
     low_information = _is_low_information_reply(target_text)
     state_sensitive = _contains_any("\n".join([full_context_text, target_text]), REALITY_STATE_HINTS)
     relationship_terms = sorted(
         term
         for term in relationship_phrase_sets.get(rel_key, set())
-        if term and (target_text == term or (len(term) >= 3 and term in target_text))
-    )[:8]
+        if term and (target_text == term or (len(term) >= TAXONOMY_RELATIONSHIP_TERM_MIN_CHARS and term in target_text))
+    )[:TAXONOMY_RELATIONSHIP_TERM_LIMIT]
     media_dependent = (
         bool(target_media_elements)
-        or context_media_turns > 0 and len(re.sub(r"\s+", "", other_context_text)) < 24
+        or context_media_turns > 0 and len(re.sub(r"\s+", "", other_context_text)) < TAXONOMY_MEDIA_CONTEXT_MAX_CHARS
     )
     grounding_types: List[str] = []
     if media_dependent:
@@ -106,29 +136,29 @@ def _classify_learning_pair(
 
     reply_len = len(target_text)
     sft_ok = (
-        score >= 85
+        score >= TAXONOMY_SFT_SCORE_MIN
         and context_has_text_grounding
         and not media_dependent
         and not state_sensitive
         and not low_information
-        and 3 <= reply_len <= 160
+        and TAXONOMY_SFT_REPLY_MIN_CHARS <= reply_len <= TAXONOMY_SFT_REPLY_MAX_CHARS
         and scope in {"global_style", "familiar_private"}
     )
     use_for: List[str] = []
-    if score >= 70:
+    if score >= TAXONOMY_RAG_SCORE_MIN:
         use_for.append("rag")
     if sft_ok:
         use_for.append("sft_candidate")
-    if low_information or relationship_terms or reply_len <= 14:
+    if low_information or relationship_terms or reply_len <= TAXONOMY_PHRASE_PROFILE_REPLY_MAX_CHARS:
         use_for.append("phrase_profile")
     if low_information or media_dependent or state_sensitive or relationship_terms:
         use_for.append("rerank_only")
     if not use_for:
         use_for.append("exclude")
 
-    if sft_ok and score >= 95:
+    if sft_ok and score >= TAXONOMY_HIGH_VALUE_SCORE_MIN:
         learning_value = "high"
-    elif "rag" in use_for and score >= 75 and not state_sensitive:
+    elif "rag" in use_for and score >= TAXONOMY_MEDIUM_VALUE_SCORE_MIN and not state_sensitive:
         learning_value = "medium"
     else:
         learning_value = "low"
@@ -202,7 +232,7 @@ def _sft_record(pair: Dict[str, Any], taxonomy: Dict[str, Any]) -> Dict[str, Any
         "scope": taxonomy.get("scope"),
         "learning_value": taxonomy.get("learning_value"),
         "grounding_type": taxonomy.get("grounding_type"),
-        "context": context[-12:],
+        "context": context[-TAXONOMY_SFT_CONTEXT_TAIL_TURNS:],
         "target": str(target.get("text") or ""),
         "target_turn": {
             "message_count": int(target.get("message_count") or 0),
@@ -294,8 +324,14 @@ def _build_rerank_style_rules(
         scenes[scene_key] = {
             "sample_count": stats["sample_count"],
             "median_target_length": int(median(lengths)) if lengths else 0,
-            "p90_target_length": _percentile_int(lengths, 0.9),
-            "max_recommended_length": min(160, max(12, _percentile_int(lengths, 0.9) + 8)),
+            "p90_target_length": _percentile_int(lengths, TAXONOMY_RERANK_P90_PERCENTILE),
+            "max_recommended_length": min(
+                TAXONOMY_RERANK_MAX_LENGTH_CAP,
+                max(
+                    TAXONOMY_RERANK_MAX_LENGTH_MIN,
+                    _percentile_int(lengths, TAXONOMY_RERANK_P90_PERCENTILE) + TAXONOMY_RERANK_MAX_LENGTH_PADDING,
+                ),
+            ),
             "length_buckets": dict(stats["length_buckets"].most_common()),
             "learning_value_counts": dict(stats["learning_value_counts"].most_common()),
             "grounding_type_counts": dict(stats["grounding_type_counts"].most_common()),
@@ -304,13 +340,13 @@ def _build_rerank_style_rules(
         }
 
     relationships = {}
-    for rel_key, stats in sorted(rel_stats.items(), key=lambda kv: -int(kv[1]["sample_count"]))[:100]:
+    for rel_key, stats in sorted(rel_stats.items(), key=lambda kv: -int(kv[1]["sample_count"]))[:TAXONOMY_RERANK_RELATIONSHIP_LIMIT]:
         lengths = [int(value) for value in stats.pop("lengths")]
         relationships[rel_key] = {
             "sample_count": stats["sample_count"],
             "median_target_length": int(median(lengths)) if lengths else 0,
-            "p90_target_length": _percentile_int(lengths, 0.9),
-            "scene_counts": dict(stats["scene_counts"].most_common(6)),
+            "p90_target_length": _percentile_int(lengths, TAXONOMY_RERANK_P90_PERCENTILE),
+            "scene_counts": dict(stats["scene_counts"].most_common(TAXONOMY_RERANK_SCENE_COUNT_LIMIT)),
             "scope_counts": dict(stats["scope_counts"].most_common()),
         }
 
@@ -331,8 +367,8 @@ def _build_rerank_style_rules(
             "particles": global_section.get("particles") or [],
         },
         "hard_filters": {
-            "too_ai_like_markers": ["AI", "机器人", "助手", "无法", "我不能", "根据上下文"],
-            "too_formal_markers": ["您好", "请问", "非常抱歉", "感谢", "有什么可以帮"],
+            "too_ai_like_markers": list(TAXONOMY_HARD_AI_MARKERS),
+            "too_formal_markers": list(TAXONOMY_HARD_FORMAL_MARKERS),
             "state_sensitive_markers": list(REALITY_STATE_HINTS),
         },
         "scenes": scenes,

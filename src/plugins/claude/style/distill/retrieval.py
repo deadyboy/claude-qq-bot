@@ -7,6 +7,64 @@ from .taxonomy import *
 from .reports import *
 
 
+SCENE_PRIVATE_EMOTIONAL_LATEST_MAX_CHARS = DISTILL_SETTINGS.int_value("retrieval.scene_inference.private_emotional_latest_max_chars", 80)
+SCENE_LONG_LATEST_MIN_CHARS = DISTILL_SETTINGS.int_value("retrieval.scene_inference.private_long_latest_min_chars", 80)
+SCENE_LONG_CONTEXT_MIN_LINES = DISTILL_SETTINGS.int_value("retrieval.scene_inference.private_long_context_min_lines", 3)
+SCENE_LONG_CONTEXT_MIN_CHARS = DISTILL_SETTINGS.int_value("retrieval.scene_inference.private_long_context_min_chars", 160)
+
+RETRIEVAL_DIALOGUE_DEFAULT_LIMIT = DISTILL_SETTINGS.int_value("retrieval.dialogue_pair.default_limit", 8)
+RETRIEVAL_DIALOGUE_CONTEXT_TAIL_TURNS = DISTILL_SETTINGS.int_value("retrieval.dialogue_pair.context_tail_turns", 12)
+RETRIEVAL_DIALOGUE_SOURCE_BONUS = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.source_bonus", 0.35)
+RETRIEVAL_DIALOGUE_SCENE_BONUS = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.scene_bonus", 0.22)
+RETRIEVAL_DIALOGUE_FALLBACK_BONUS = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.fallback_bonus_without_source", 0.04)
+RETRIEVAL_DIALOGUE_OVERLAP_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.overlap_weight", 0.5)
+RETRIEVAL_DIALOGUE_KEYWORD_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.keyword_weight", 0.3)
+RETRIEVAL_DIALOGUE_QUALITY_DIVISOR = DISTILL_SETTINGS.float_value("retrieval.dialogue_pair.quality_divisor", 1200)
+
+RETRIEVAL_MAX_QUERY_CHARS = DISTILL_SETTINGS.int_value("retrieval.similarity.max_query_chars", 500)
+RETRIEVAL_CONTEXT_TAIL_MESSAGES = DISTILL_SETTINGS.int_value("retrieval.similarity.context_tail_messages", 3)
+RETRIEVAL_MIN_INTENT_WITHOUT_TEXT = DISTILL_SETTINGS.float_value("retrieval.similarity.min_intent_bonus_without_text", 0.08)
+RETRIEVAL_QUESTION_FEATURE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.question_feature_bonus", 0.04)
+RETRIEVAL_LENGTH_FEATURE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.length_feature_bonus", 0.03)
+RETRIEVAL_CHAT_TYPE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.preferred_chat_type_bonus", 0.12)
+RETRIEVAL_CHAT_TYPE_PENALTY = DISTILL_SETTINGS.float_value("retrieval.similarity.mismatched_chat_type_penalty", -0.08)
+RETRIEVAL_SOURCE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.preferred_source_bonus", 0.1)
+RETRIEVAL_QUALITY_DIVISOR = DISTILL_SETTINGS.float_value("retrieval.similarity.quality_divisor", 1000)
+RETRIEVAL_OVERLAP_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.similarity.overlap_weight", 0.58)
+RETRIEVAL_KEYWORD_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.similarity.keyword_weight", 0.28)
+RETRIEVAL_EMBEDDING_LIMIT_MIN = DISTILL_SETTINGS.int_value("retrieval.similarity.embedding_limit_min", 20)
+RETRIEVAL_EMBEDDING_LIMIT_MAX = DISTILL_SETTINGS.int_value("retrieval.similarity.embedding_limit_max", 100)
+RETRIEVAL_EMBEDDING_LIMIT_MULTIPLIER = DISTILL_SETTINGS.int_value("retrieval.similarity.embedding_limit_multiplier", 8)
+RETRIEVAL_EMBEDDING_SOURCE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.embedding_source_bonus", 0.08)
+RETRIEVAL_EMBEDDING_CHAT_TYPE_BONUS = DISTILL_SETTINGS.float_value("retrieval.similarity.embedding_chat_type_bonus", 0.06)
+RETRIEVAL_EMBEDDING_CHAT_TYPE_PENALTY = DISTILL_SETTINGS.float_value("retrieval.similarity.embedding_chat_type_penalty", -0.04)
+RETRIEVAL_HYBRID_RULE_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.similarity.hybrid_rule_weight", 0.78)
+RETRIEVAL_HYBRID_EMBEDDING_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.similarity.hybrid_embedding_weight", 0.38)
+RETRIEVAL_EMBEDDING_ONLY_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.similarity.embedding_only_weight", 0.78)
+RETRIEVAL_EMBEDDING_QUALITY_DIVISOR = DISTILL_SETTINGS.float_value("retrieval.similarity.embedding_quality_divisor", 1500)
+
+SCENE_MATCH_SAMPLE_COUNT_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.scene_match.sample_count_weight", 0.01)
+SCENE_MATCH_AVG_SCORE_WEIGHT = DISTILL_SETTINGS.float_value("retrieval.scene_match.avg_score_weight", 0.01)
+SCENE_MATCH_CHAT_TYPE_BONUS = DISTILL_SETTINGS.float_value("retrieval.scene_match.chat_type_bonus", 2.0)
+SCENE_MATCH_LENGTH_BUCKET_BONUS = DISTILL_SETTINGS.float_value("retrieval.scene_match.length_bucket_bonus", 1.5)
+SCENE_MATCH_QUESTION_BONUS = DISTILL_SETTINGS.float_value("retrieval.scene_match.question_scene_bonus", 0.4)
+SCENE_MATCH_EMOTIONAL_BONUS = DISTILL_SETTINGS.float_value("retrieval.scene_match.emotional_scene_bonus", 0.4)
+SCENE_MATCH_PAUSE_BONUS = DISTILL_SETTINGS.float_value("retrieval.scene_match.pause_scene_bonus", 0.4)
+
+GUIDANCE_STRONG_SIMILARITY_THRESHOLD = DISTILL_SETTINGS.float_value("retrieval.guidance.strong_similarity_threshold", 0.32)
+GUIDANCE_STRONG_CONTEXT_THRESHOLD = DISTILL_SETTINGS.float_value("retrieval.guidance.strong_context_overlap_threshold", 0.12)
+GUIDANCE_STRONG_KEYWORD_THRESHOLD = DISTILL_SETTINGS.float_value("retrieval.guidance.strong_keyword_overlap_threshold", 0.12)
+GUIDANCE_TARGET_LENGTH_SAMPLE_COUNT = DISTILL_SETTINGS.int_value("retrieval.guidance.target_length_sample_count", 5)
+GUIDANCE_FALLBACK_TARGET_MIN = DISTILL_SETTINGS.int_value("retrieval.guidance.fallback_target_min", 6)
+GUIDANCE_FALLBACK_TARGET_MAX = DISTILL_SETTINGS.int_value("retrieval.guidance.fallback_target_max", 30)
+GUIDANCE_FALLBACK_TARGET_DEFAULT = DISTILL_SETTINGS.int_value("retrieval.guidance.fallback_target_default", 12)
+GUIDANCE_LENGTH_BUCKETS = DISTILL_SETTINGS.dict_list("retrieval.guidance.length_buckets")
+GUIDANCE_DEFAULT_LENGTH_INSTRUCTION = DISTILL_SETTINGS.str_value("retrieval.guidance.default_length_instruction", "可以稍微展开，但保持口语化")
+GUIDANCE_HIGH_RISK_STANCE = DISTILL_SETTINGS.str_value("retrieval.guidance.high_risk_stance", "对方涉及账号、凭据、钱或严肃确认时，必须守住硬边界；可以用主人的语气拒绝或要求主人亲自确认。")
+GUIDANCE_REALITY_STANCE = DISTILL_SETTINGS.str_value("retrieval.guidance.reality_stance", "对方在问主人现实状态或可用性时，保留主人的口气，但把具体忙闲、位置、进度等事实模糊化。")
+GUIDANCE_DEFAULT_STANCE = DISTILL_SETTINGS.str_value("retrieval.guidance.default_stance", "优先从相似历史样本归纳主人通常如何接话；不要套用固定场景模板。")
+
+
 def infer_scene_label(
     latest_message: str,
     *,
@@ -27,15 +85,18 @@ def infer_scene_label(
         _contains_any(latest_text, EMOTIONAL_HINTS)
         or latest_features["has_exclamation"]
         or latest_features["emoji_count"] > 0
-        or (_contains_any(context_text, EMOTIONAL_HINTS) and len(latest_text) <= 80)
+        or (_contains_any(context_text, EMOTIONAL_HINTS) and len(latest_text) <= SCENE_PRIVATE_EMOTIONAL_LATEST_MAX_CHARS)
     ):
         return "private_emotional"
     if _contains_any(latest_text, EXPLAIN_HINTS):
         return "private_long_explain"
     if (
-        len(latest_text) >= 80
+        len(latest_text) >= SCENE_LONG_LATEST_MIN_CHARS
         or latest_features["line_count"] > 1
-        or (context_features["line_count"] >= 3 and len(context_text) >= 160)
+        or (
+            context_features["line_count"] >= SCENE_LONG_CONTEXT_MIN_LINES
+            and len(context_text) >= SCENE_LONG_CONTEXT_MIN_CHARS
+        )
     ):
         return "private_long_explain"
     return "private_short_casual"
@@ -87,7 +148,7 @@ def retrieve_dialogue_pair_samples(
     chat_type: str = "private",
     target_id: str | int | None = None,
     scene_label: str | None = None,
-    limit: int = 8,
+    limit: int = RETRIEVAL_DIALOGUE_DEFAULT_LIMIT,
 ) -> Dict[str, Any]:
     """Retrieval-first raw dialogue-pair lookup for offline draft generation."""
     query_text = _normalize_current_context(current_context, latest_message)
@@ -114,16 +175,16 @@ def retrieve_dialogue_pair_samples(
         overlap = _jaccard(query_ngrams, _text_ngrams(pair_context))
         keyword_overlap = _jaccard(query_keywords, _keyword_tokens(pair_context))
         intent_bonus = _intent_similarity(query_intent, detect_message_intent(pair_context))
-        source_bonus = 0.35 if preferred_source and pair.get("source_file_id") == preferred_source else 0.0
-        scene_bonus = 0.22 if inferred_scene and pair.get("scene_label") == inferred_scene else 0.0
-        fallback_bonus = 0.04 if not preferred_source else 0.0
+        source_bonus = RETRIEVAL_DIALOGUE_SOURCE_BONUS if preferred_source and pair.get("source_file_id") == preferred_source else 0.0
+        scene_bonus = RETRIEVAL_DIALOGUE_SCENE_BONUS if inferred_scene and pair.get("scene_label") == inferred_scene else 0.0
+        fallback_bonus = RETRIEVAL_DIALOGUE_FALLBACK_BONUS if not preferred_source else 0.0
         total = round(
-            overlap * 0.5
-            + keyword_overlap * 0.3
+            overlap * RETRIEVAL_DIALOGUE_OVERLAP_WEIGHT
+            + keyword_overlap * RETRIEVAL_DIALOGUE_KEYWORD_WEIGHT
             + intent_bonus
             + source_bonus
             + scene_bonus
-            + (int(pair.get("score") or 0) / 1200)
+            + (int(pair.get("score") or 0) / max(1.0, RETRIEVAL_DIALOGUE_QUALITY_DIVISOR))
             + fallback_bonus,
             4,
         )
@@ -142,7 +203,7 @@ def retrieve_dialogue_pair_samples(
             "same_relationship": bool(preferred_source and pair.get("source_file_id") == preferred_source),
             "same_scene": bool(inferred_scene and pair.get("scene_label") == inferred_scene),
             "taxonomy": pair.get("taxonomy") or {},
-            "context": context_turns[-12:],
+            "context": context_turns[-RETRIEVAL_DIALOGUE_CONTEXT_TAIL_TURNS:],
             "target": pair.get("target") or {},
         })
     ranked.sort(
@@ -154,7 +215,7 @@ def retrieve_dialogue_pair_samples(
             str(item["pair_id"]),
         )
     )
-    selected = ranked[: max(0, min(8, int(limit)))]
+    selected = ranked[: max(0, min(RETRIEVAL_DIALOGUE_DEFAULT_LIMIT, int(limit)))]
     return {
         "ok": True,
         "run_id": run_path.name,
@@ -238,8 +299,8 @@ def retrieve_similar_style_samples(
     query_text = query.strip()
     if not query_text:
         return {"ok": False, "message": "用法：/风格 检索 <当前对方消息>"}
-    if len(query_text) > 500:
-        return {"ok": False, "message": "检索文本太长，先支持 500 字以内。"}
+    if len(query_text) > RETRIEVAL_MAX_QUERY_CHARS:
+        return {"ok": False, "message": f"检索文本太长，先支持 {RETRIEVAL_MAX_QUERY_CHARS} 字以内。"}
 
     run_path, catalog, samples = _resolve_run_paths(run_dir)
     query_features = _features_for_text(query_text)
@@ -269,32 +330,32 @@ def retrieve_similar_style_samples(
                 context_texts.append(text)
         if not context_texts:
             continue
-        context_text = "\n".join(context_texts[-3:])
+        context_text = "\n".join(context_texts[-RETRIEVAL_CONTEXT_TAIL_MESSAGES:])
         overlap = _jaccard(query_ngrams, _text_ngrams(context_text))
         keyword_overlap = _jaccard(query_keywords, _keyword_tokens(context_text))
         context_intent = detect_message_intent(context_text)
         intent_bonus = _intent_similarity(query_intent, context_intent)
-        if overlap <= 0 and keyword_overlap <= 0 and intent_bonus < 0.08:
+        if overlap <= 0 and keyword_overlap <= 0 and intent_bonus < RETRIEVAL_MIN_INTENT_WITHOUT_TEXT:
             continue
         reply = sample.get("reply") or {}
         feature_bonus = 0.0
         if bool(query_features["has_question"]) == bool(reply.get("features", {}).get("has_question")):
-            feature_bonus += 0.04
+            feature_bonus += RETRIEVAL_QUESTION_FEATURE_BONUS
         if query_features["length_bucket"] == reply.get("length_bucket"):
-            feature_bonus += 0.03
+            feature_bonus += RETRIEVAL_LENGTH_FEATURE_BONUS
         chat_type_bonus = 0.0
         if preferred_chat_type:
             if sample.get("chat_type") == preferred_chat_type:
-                chat_type_bonus += 0.12
+                chat_type_bonus += RETRIEVAL_CHAT_TYPE_BONUS
             else:
-                chat_type_bonus -= 0.08
+                chat_type_bonus += RETRIEVAL_CHAT_TYPE_PENALTY
         source_bonus = 0.0
         if preferred_source_file_id and source_file_id == preferred_source_file_id:
-            source_bonus += 0.1
-        quality_bonus = int(sample.get("score") or 0) / 1000
+            source_bonus += RETRIEVAL_SOURCE_BONUS
+        quality_bonus = int(sample.get("score") or 0) / max(1.0, RETRIEVAL_QUALITY_DIVISOR)
         total_score = round(
-            (overlap * 0.58)
-            + (keyword_overlap * 0.28)
+            (overlap * RETRIEVAL_OVERLAP_WEIGHT)
+            + (keyword_overlap * RETRIEVAL_KEYWORD_WEIGHT)
             + intent_bonus
             + feature_bonus
             + chat_type_bonus
@@ -327,7 +388,10 @@ def retrieve_similar_style_samples(
 
     embedding_status = {"enabled": False, "ok": False, "message": "未启用 embedding 检索。"}
     if use_embedding:
-        embedding_limit = max(20, min(100, int(limit or DEFAULT_RETRIEVAL_LIMIT) * 8))
+        embedding_limit = max(
+            RETRIEVAL_EMBEDDING_LIMIT_MIN,
+            min(RETRIEVAL_EMBEDDING_LIMIT_MAX, int(limit or DEFAULT_RETRIEVAL_LIMIT) * RETRIEVAL_EMBEDDING_LIMIT_MULTIPLIER),
+        )
         embedding_result = _query_embedding_index_for_retrieval(
             query_text,
             run_dir=run_path,
@@ -362,17 +426,23 @@ def retrieve_similar_style_samples(
                 sample = samples_by_pair_id.get(pair_id)
                 source_file_id = str(metadata.get("source_file_id") or (sample or {}).get("source_file_id") or "")
                 hit_chat_type = str(metadata.get("chat_type") or (sample or {}).get("chat_type") or "")
-                source_bonus = 0.08 if preferred_source_file_id and source_file_id == preferred_source_file_id else 0.0
-                chat_type_bonus = 0.06 if preferred_chat_type and hit_chat_type == preferred_chat_type else 0.0
+                source_bonus = RETRIEVAL_EMBEDDING_SOURCE_BONUS if preferred_source_file_id and source_file_id == preferred_source_file_id else 0.0
+                chat_type_bonus = RETRIEVAL_EMBEDDING_CHAT_TYPE_BONUS if preferred_chat_type and hit_chat_type == preferred_chat_type else 0.0
                 if preferred_chat_type and hit_chat_type and hit_chat_type != preferred_chat_type:
-                    chat_type_bonus -= 0.04
+                    chat_type_bonus += RETRIEVAL_EMBEDDING_CHAT_TYPE_PENALTY
 
                 existing = by_pair_id.get(pair_id)
                 if existing:
                     rule_similarity = _safe_float(existing.get("rule_similarity") or existing.get("similarity"))
                     hybrid = max(
                         rule_similarity,
-                        round(rule_similarity * 0.78 + embedding_similarity * 0.38 + source_bonus + chat_type_bonus, 4),
+                        round(
+                            rule_similarity * RETRIEVAL_HYBRID_RULE_WEIGHT
+                            + embedding_similarity * RETRIEVAL_HYBRID_EMBEDDING_WEIGHT
+                            + source_bonus
+                            + chat_type_bonus,
+                            4,
+                        ),
                     )
                     existing.update({
                         "similarity": hybrid,
@@ -387,10 +457,10 @@ def retrieve_similar_style_samples(
                 reply = (sample or {}).get("reply") or {}
                 context = (sample or {}).get("context") or {}
                 embedding_only_score = round(
-                    embedding_similarity * 0.78
+                    embedding_similarity * RETRIEVAL_EMBEDDING_ONLY_WEIGHT
                     + source_bonus
                     + chat_type_bonus
-                    + (quality_score / 1500),
+                    + (quality_score / max(1.0, RETRIEVAL_EMBEDDING_QUALITY_DIVISOR)),
                     4,
                 )
                 item = {
@@ -505,20 +575,23 @@ def _scene_match_score(
     preferred_length_bucket: str,
     query_features: Dict[str, Any],
 ) -> float:
-    score = _safe_int(scene.get("sample_count")) * 0.01 + _safe_float(scene.get("avg_score")) * 0.01
+    score = (
+        _safe_int(scene.get("sample_count")) * SCENE_MATCH_SAMPLE_COUNT_WEIGHT
+        + _safe_float(scene.get("avg_score")) * SCENE_MATCH_AVG_SCORE_WEIGHT
+    )
     scene_id = str(scene.get("scene_id") or "")
     chat_types = scene.get("chat_types") or {}
     length_buckets = scene.get("length_buckets") or {}
     if preferred_chat_type and _safe_int(chat_types.get(preferred_chat_type)) > 0:
-        score += 2.0
+        score += SCENE_MATCH_CHAT_TYPE_BONUS
     if preferred_length_bucket and _safe_int(length_buckets.get(preferred_length_bucket)) > 0:
-        score += 1.5
+        score += SCENE_MATCH_LENGTH_BUCKET_BONUS
     if query_features.get("has_question") and "question_reply" in scene_id:
-        score += 0.4
+        score += SCENE_MATCH_QUESTION_BONUS
     if query_features.get("has_exclamation") and "emotional_reply" in scene_id:
-        score += 0.4
+        score += SCENE_MATCH_EMOTIONAL_BONUS
     if query_features.get("has_ellipsis") and "pause_reply" in scene_id:
-        score += 0.4
+        score += SCENE_MATCH_PAUSE_BONUS
     return score
 
 def _select_scene_profiles(
@@ -574,9 +647,9 @@ def _derive_generation_guidance(
 ) -> Dict[str, Any]:
     strong_results = [
         item for item in retrieval_results
-        if _safe_float(item.get("similarity")) >= 0.32
-        or _safe_float(item.get("context_overlap")) >= 0.12
-        or _safe_float(item.get("keyword_overlap")) >= 0.12
+        if _safe_float(item.get("similarity")) >= GUIDANCE_STRONG_SIMILARITY_THRESHOLD
+        or _safe_float(item.get("context_overlap")) >= GUIDANCE_STRONG_CONTEXT_THRESHOLD
+        or _safe_float(item.get("keyword_overlap")) >= GUIDANCE_STRONG_KEYWORD_THRESHOLD
     ]
     length_source = strong_results or retrieval_results
     reply_lengths = [
@@ -591,9 +664,19 @@ def _derive_generation_guidance(
             if _safe_float(item.get("avg_reply_length")) > 0
         ]
     if reply_lengths:
-        target_length = round(sum(reply_lengths[:5]) / min(5, len(reply_lengths)), 1)
+        target_length = round(
+            sum(reply_lengths[:GUIDANCE_TARGET_LENGTH_SAMPLE_COUNT])
+            / min(GUIDANCE_TARGET_LENGTH_SAMPLE_COUNT, len(reply_lengths)),
+            1,
+        )
     else:
-        target_length = max(6, min(30, _safe_int(query_features.get("char_length"), 12)))
+        target_length = max(
+            GUIDANCE_FALLBACK_TARGET_MIN,
+            min(
+                GUIDANCE_FALLBACK_TARGET_MAX,
+                _safe_int(query_features.get("char_length"), GUIDANCE_FALLBACK_TARGET_DEFAULT),
+            ),
+        )
 
     labels = Counter()
     for item in relationship_profiles:
@@ -602,21 +685,22 @@ def _derive_generation_guidance(
     intent = query_features.get("intent") or {}
     risk_level = int(intent.get("commitment_risk_level") or 0)
     risk_label = str(intent.get("commitment_risk_label") or "phatic_social")
-    if target_length <= 8:
-        length_instruction = "优先 3-8 字短回复"
-    elif target_length <= 18:
-        length_instruction = "优先 8-18 字中短回复"
-    elif target_length <= 40:
-        length_instruction = "优先 15-40 字，给一点上下文"
-    else:
-        length_instruction = "可以稍微展开，但保持口语化"
+    length_instruction = GUIDANCE_DEFAULT_LENGTH_INSTRUCTION
+    for rule in GUIDANCE_LENGTH_BUCKETS:
+        try:
+            max_chars = float(rule.get("max"))
+        except (TypeError, ValueError):
+            continue
+        if target_length <= max_chars:
+            length_instruction = str(rule.get("instruction") or GUIDANCE_DEFAULT_LENGTH_INSTRUCTION)
+            break
 
     if risk_level >= 3:
-        stance = "对方涉及账号、凭据、钱或严肃确认时，必须守住硬边界；可以用主人的语气拒绝或要求主人亲自确认。"
+        stance = GUIDANCE_HIGH_RISK_STANCE
     elif intent.get("availability_query") or intent.get("reality_state_query"):
-        stance = "对方在问主人现实状态或可用性时，保留主人的口气，但把具体忙闲、位置、进度等事实模糊化。"
+        stance = GUIDANCE_REALITY_STANCE
     else:
-        stance = "优先从相似历史样本归纳主人通常如何接话；不要套用固定场景模板。"
+        stance = GUIDANCE_DEFAULT_STANCE
 
     return {
         "target_reply_length": target_length,

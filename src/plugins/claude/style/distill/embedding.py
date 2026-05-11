@@ -16,16 +16,30 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 from .reports import _load_dialogue_pairs, find_latest_distill_run
+from .settings import DISTILL_SETTINGS, PROJECT_ROOT
 
 
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-DEFAULT_MODEL_ROOT = Path(os.getenv("QQBOT_EMBEDDING_MODEL_ROOT") or r"F:\ClaudeSpace2\models")
+DEFAULT_EMBEDDING_MODEL = os.getenv(
+    "QQBOT_EMBEDDING_MODEL",
+    DISTILL_SETTINGS.str_value("embedding.model", "BAAI/bge-small-zh-v1.5"),
+)
+DEFAULT_MODEL_ROOT = Path(
+    os.getenv("QQBOT_EMBEDDING_MODEL_ROOT")
+    or DISTILL_SETTINGS.path_value("embedding.model_root", PROJECT_ROOT.parent / "models")
+)
 DEFAULT_SENTENCE_TRANSFORMERS_CACHE = DEFAULT_MODEL_ROOT / "sentence-transformers"
 DEFAULT_HF_HOME = DEFAULT_MODEL_ROOT / "hf-home"
 DEFAULT_TORCH_HOME = DEFAULT_MODEL_ROOT / "torch"
-DEFAULT_COLLECTION_NAME = "stage5b_rag_pool_bge_small_zh_v1_5"
-DEFAULT_BATCH_SIZE = 64
-DEFAULT_QUERY_LIMIT = 20
+DEFAULT_COLLECTION_NAME = DISTILL_SETTINGS.str_value(
+    "embedding.collection_name",
+    "stage5b_rag_pool_bge_small_zh_v1_5",
+)
+DEFAULT_BATCH_SIZE = DISTILL_SETTINGS.int_value("embedding.batch_size", 64)
+DEFAULT_QUERY_LIMIT = DISTILL_SETTINGS.int_value("embedding.query_limit", 20)
+EMBEDDING_CLEAN_INDEX_TEXT_CHARS = DISTILL_SETTINGS.int_value("embedding.clean_index_text_chars", 1600)
+EMBEDDING_TURN_TEXT_CHARS = DISTILL_SETTINGS.int_value("embedding.turn_text_chars", 500)
+EMBEDDING_MAX_QUERY_RESULTS = DISTILL_SETTINGS.int_value("embedding.max_query_results", 100)
+EMBEDDING_TEMP_DIR = DISTILL_SETTINGS.path_value("embedding.temp_dir", PROJECT_ROOT.parent / "tmp")
 _MODEL_CACHE: Dict[str, Any] = {}
 __all__ = [
     "DEFAULT_EMBEDDING_MODEL",
@@ -46,8 +60,8 @@ def configure_embedding_environment() -> None:
     os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(DEFAULT_SENTENCE_TRANSFORMERS_CACHE))
     os.environ.setdefault("TORCH_HOME", str(DEFAULT_TORCH_HOME))
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    os.environ.setdefault("TEMP", r"F:\ClaudeSpace2\tmp")
-    os.environ.setdefault("TMP", r"F:\ClaudeSpace2\tmp")
+    os.environ.setdefault("TEMP", str(EMBEDDING_TEMP_DIR))
+    os.environ.setdefault("TMP", str(EMBEDDING_TEMP_DIR))
 
 
 def _embedding_index_dir(run_path: Path) -> Path:
@@ -58,9 +72,10 @@ def _embedding_manifest_path(run_path: Path) -> Path:
     return run_path / "embedding_manifest.json"
 
 
-def _clean_index_text(text: Any, limit: int = 1600) -> str:
+def _clean_index_text(text: Any, limit: int | None = None) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
-    return cleaned[:limit]
+    max_chars = EMBEDDING_CLEAN_INDEX_TEXT_CHARS if limit is None else int(limit)
+    return cleaned[:max(0, max_chars)]
 
 
 def _turns_text(turns: Sequence[Dict[str, Any]], *, roles: set[str] | None = None) -> str:
@@ -70,7 +85,7 @@ def _turns_text(turns: Sequence[Dict[str, Any]], *, roles: set[str] | None = Non
             continue
         if roles and str(turn.get("role") or "") not in roles:
             continue
-        text = _clean_index_text(turn.get("text"), 500)
+        text = _clean_index_text(turn.get("text"), EMBEDDING_TURN_TEXT_CHARS)
         if text:
             texts.append(text)
     return "\n".join(texts)
@@ -296,7 +311,7 @@ def query_stage5b_embedding_index(
     query_embedding = model.encode([query_text], normalize_embeddings=True).tolist()[0]
     raw_result = collection.query(
         query_embeddings=[query_embedding],
-        n_results=max(1, min(100, int(limit or DEFAULT_QUERY_LIMIT))),
+        n_results=max(1, min(EMBEDDING_MAX_QUERY_RESULTS, int(limit or DEFAULT_QUERY_LIMIT))),
         include=["metadatas", "distances"],
     )
     ids = (raw_result.get("ids") or [[]])[0]
