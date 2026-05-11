@@ -44,6 +44,10 @@ ONEBOT_WS_URL=ws://127.0.0.1:6700
 LLM_API_BASE=https://api.llm.ustc.edu.cn/v1
 LLM_API_KEY=your_api_key_here
 LLM_MODEL=deepseek-v4-pro
+LLM_VISION_MODEL=qwen-chat
+# 可选：图片模型与文字模型不在同一接口时单独配置
+# LLM_VISION_API_BASE=https://api.llm.ustc.edu.cn/v1
+# LLM_VISION_API_KEY=your_api_key_here
 
 # 会话配置
 MAX_CONTEXT_MESSAGES=20
@@ -52,6 +56,8 @@ SESSION_TIMEOUT=3600
 # 系统提示词
 SYSTEM_PROMPT=你是一个 QQ 机器人助手，用简洁友好的语气回复用户。
 ```
+
+图片消息会优先走 `LLM_VISION_MODEL`；如果图片模型调用失败，机器人会回退到文字模型并提示对方补充描述。
 
 ---
 

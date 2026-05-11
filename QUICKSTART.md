@@ -10,6 +10,9 @@
 API 地址：https://api.llm.ustc.edu.cn/v1
 API Key: 请在 `.env` 中配置，不要写入文档
 默认模型：deepseek-v4-pro
+图片模型：qwen-chat
+图片模型接口：默认按图片模型自动选择，可用 `LLM_VISION_API_BASE` 单独覆盖
+图片模型失败时：自动回退到文字模型，避免直接报 API 调用失败
 ```
 
 ### 可用模型

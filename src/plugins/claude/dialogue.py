@@ -1285,7 +1285,33 @@ async def handle_simple_chat(
     messages = history + [{"role": "user", "content": text or "请描述这张图片"}]
 
     try:
-        response = await llm_client.chat(messages=messages, system_prompt=system_prompt)
+        if images:
+            try:
+                response = await llm_client.chat_with_images(
+                    messages=messages,
+                    image_urls=images,
+                    system_prompt=system_prompt,
+                    model=model_config.get_current_vision_model(),
+                    base_url=model_config.get_current_vision_api_base(),
+                    api_key=model_config.get_current_vision_api_key(),
+                )
+            except Exception as vision_error:
+                write_runtime_error("handle_simple_chat.vision", vision_error)
+                logger.exception(
+                    "图片模型调用失败，回退到文字模型：%s: %s",
+                    type(vision_error).__name__,
+                    vision_error,
+                )
+                fallback_text = (
+                    f"{text}\n\n" if text else ""
+                ) + "用户发了图片，但当前图片模型暂时读取失败。请简短自然地说明这边暂时看不了图，让对方补充文字描述。"
+                fallback_messages = history + [{"role": "user", "content": fallback_text}]
+                response = await llm_client.chat(
+                    messages=fallback_messages,
+                    system_prompt=system_prompt,
+                )
+        else:
+            response = await llm_client.chat(messages=messages, system_prompt=system_prompt)
         response = format_reply(response)
         parts = split_qq_msg(response)
 

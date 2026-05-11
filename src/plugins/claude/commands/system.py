@@ -57,9 +57,18 @@ async def handle_model_switch(
     parts = text.split()
     if len(parts) < 2:
         current = model_config.get_current_model()
+        vision = model_config.get_current_vision_model()
         api_base = model_config.get_current_api_base()
+        vision_api_base = model_config.get_current_vision_api_base()
         available = ", ".join(model_config.list_models())
-        msg = f"当前模型：{current}\nAPI Base：{api_base}\n可用模型：{available}\n用法：/model <模型名>"
+        msg = (
+            f"当前模型：{current}\n"
+            f"图片模型：{vision}\n"
+            f"API Base：{api_base}\n"
+            f"图片 API Base：{vision_api_base}\n"
+            f"可用模型：{available}\n"
+            "用法：/model <模型名>"
+        )
         await send_qq_text(bot, event, msg)
         return
 
@@ -99,7 +108,9 @@ async def handle_basic_status(
         f"- 当前场景：{session_kind}",
         "- 模式：普通聊天 + 记忆 + 教学审核",
         f"- 模型：{model_config.get_current_model()}",
+        f"- 图片模型：{model_config.get_current_vision_model()}",
         f"- API Base：{model_config.get_current_api_base()}",
+        f"- 图片 API Base：{model_config.get_current_vision_api_base()}",
         f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",
         "- 自动代聊发送：已退役",
         f"- 教学影子审核：{'开' if is_style_teaching_enabled() else '关'}",

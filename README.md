@@ -45,7 +45,13 @@ ONEBOT_WS_URL=ws://127.0.0.1:6700
 LLM_API_BASE=https://api.llm.ustc.edu.cn/v1
 LLM_API_KEY=sk-xxxxx
 LLM_MODEL=deepseek-v4-pro
+LLM_VISION_MODEL=qwen-chat
+# 可选：图片模型与文字模型不在同一接口时单独配置
+# LLM_VISION_API_BASE=https://api.llm.ustc.edu.cn/v1
+# LLM_VISION_API_KEY=sk-xxxxx
 ```
+
+收到图片时会优先调用 `LLM_VISION_MODEL`；如果该模型或接口暂时不支持图片，会回退到文字模型并让对方补充文字描述，避免直接报 API 调用失败。
 
 ### 4. 启动机器人
 

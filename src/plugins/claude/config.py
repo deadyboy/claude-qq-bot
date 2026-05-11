@@ -26,11 +26,17 @@ class ModelConfig:
             return
 
         self.model = os.getenv("LLM_MODEL", "deepseek-v4-pro")
+        self.vision_model = os.getenv("LLM_VISION_MODEL", "qwen-chat")
         self.api_base = os.getenv("LLM_API_BASE") or SUPPORTED_MODELS.get(
             self.model,
             "https://api.llm.ustc.edu.cn/v1"
         )
+        self.vision_api_base = os.getenv("LLM_VISION_API_BASE") or SUPPORTED_MODELS.get(
+            self.vision_model,
+            self.api_base,
+        )
         self.api_key = os.getenv("LLM_API_KEY")
+        self.vision_api_key = os.getenv("LLM_VISION_API_KEY") or self.api_key
         self._initialized = True
 
     def switch_model(self, model_name: str) -> tuple[bool, str]:
@@ -47,6 +53,15 @@ class ModelConfig:
 
     def get_current_model(self) -> str:
         return self.model
+
+    def get_current_vision_model(self) -> str:
+        return self.vision_model
+
+    def get_current_vision_api_base(self) -> str:
+        return self.vision_api_base
+
+    def get_current_vision_api_key(self) -> Optional[str]:
+        return self.vision_api_key
 
     def get_current_api_base(self) -> str:
         return self.api_base
