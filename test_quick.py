@@ -4,6 +4,7 @@
 import sys
 import asyncio
 import json
+import os
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -640,7 +641,7 @@ async def test_style_distill():
                     "id": "ai1",
                     "seq": "1",
                     "timestamp": 1700000300,
-                    "sender": {"uin": "4011238485", "name": "ai_bot"},
+                    "sender": {"uin": "9000000009", "name": "ai_bot"},
                     "type": "type_1",
                     "content": {
                         "text": "你好！我是 36，你的 AI 科研助手 🤖 有什么我可以帮你的吗？",
@@ -663,7 +664,7 @@ async def test_style_distill():
                     "id": "ai3",
                     "seq": "3",
                     "timestamp": 1700000360,
-                    "sender": {"uin": "4011238485", "name": "ai_bot"},
+                    "sender": {"uin": "9000000009", "name": "ai_bot"},
                     "type": "type_1",
                     "content": {
                         "text": "## 方案 1\n让我帮你整理一下 OpenClaw 的基础命令。\n```text\n/new\n```",
@@ -684,19 +685,27 @@ async def test_style_distill():
                 },
             ],
         }
-        (input_dir / "friend_recent_002_private_4011238485_ai_bot.json").write_text(
+        (input_dir / "friend_recent_002_private_9000000009_ai_bot.json").write_text(
             json.dumps(ai_export, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
-        result = run_qce_style_distillation(
-            input_dir=input_dir,
-            output_root=output_root,
-            self_uin="1000000001",
-            max_index_samples=10,
-            apply_to_profile=True,
-            store=store,
-        )
+        previous_excluded = os.environ.get("QQBOT_STYLE_EXCLUDED_RELATIONSHIP_IDS")
+        os.environ["QQBOT_STYLE_EXCLUDED_RELATIONSHIP_IDS"] = "9000000009"
+        try:
+            result = run_qce_style_distillation(
+                input_dir=input_dir,
+                output_root=output_root,
+                self_uin="1000000001",
+                max_index_samples=10,
+                apply_to_profile=True,
+                store=store,
+            )
+        finally:
+            if previous_excluded is None:
+                os.environ.pop("QQBOT_STYLE_EXCLUDED_RELATIONSHIP_IDS", None)
+            else:
+                os.environ["QQBOT_STYLE_EXCLUDED_RELATIONSHIP_IDS"] = previous_excluded
         assert result["ok"], result
         assert result["excluded_sources"] >= 1
         assert result["owner_text_messages"] == 3
@@ -1145,7 +1154,7 @@ async def test_style_teaching():
             f.write(json.dumps({
                 "sample_id": "sample_ai",
                 "source_file_id": "source_ai",
-                "relationship_id": "4011238485",
+                "relationship_id": "9000000009",
                 "chat_type": "private",
                 "scene_label": "formal_or_worklike",
                 "scope": "global_style",

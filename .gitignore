@@ -13,6 +13,9 @@ data/
 *.log
 logs/
 
+# Local non-secret tuning overrides
+config/*.local.json
+
 # Python cache and build outputs
 __pycache__/
 *.py[cod]

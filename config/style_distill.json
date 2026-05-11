@@ -1,0 +1,65 @@
+{
+  "paths": {
+    "export_root": "../qq-chat-exports"
+  },
+  "identity": {
+    "self_uin": ""
+  },
+  "excluded_relationship_ids": [],
+  "limits": {
+    "max_index_samples": 5000,
+    "max_reply_length": 280,
+    "max_context_messages": 8,
+    "context_window_seconds": 1800,
+    "turn_merge_seconds": 60,
+    "private_context_turns": 12,
+    "group_context_turns": 8,
+    "group_context_window_seconds": 600,
+    "max_relationship_profiles": 500,
+    "default_retrieval_limit": 6,
+    "default_generation_context_limit": 5,
+    "default_raw_fewshot_limit": 3,
+    "max_raw_fewshot_text_chars": 180,
+    "min_raw_fewshot_similarity": 0.26,
+    "min_raw_fewshot_text_or_keyword": 0.08
+  },
+  "intent_hints": {
+    "question": ["吗", "么", "呢", "吧", "怎么", "咋", "咋办", "为啥", "为什么", "什么", "哪个", "哪一个", "哪里", "在哪", "哪儿", "多少", "几", "能不能", "可不可以", "要不要", "是不是", "有没有", "有无", "行不行", "好不好", "打不打", "玩不玩", "开不开", "上不上"],
+    "availability": ["忙不忙", "忙吗", "有空", "空吗", "在不在", "在吗", "睡了吗", "醒了吗", "起了吗", "在哪", "哪里", "到哪", "来不来", "能来", "方便吗"],
+    "help": ["怎么弄", "咋弄", "怎么搞", "咋搞", "怎么处理", "怎么办", "咋办", "帮我", "帮忙", "看下", "看看", "能不能帮", "会不会", "教我"],
+    "invitation": ["一起", "吃饭", "喝", "见面", "出来", "来吗", "去吗", "约", "今晚", "明天", "周末", "要不要来", "要不要去", "打不打", "玩不玩", "开不开", "上不上"],
+    "game": ["瓦", "瓦罗兰特", "瓦洛兰特", "无畏契约", "valorant", "lol", "联盟", "王者", "农", "apex", "cs", "csgo", "cs2", "原神", "崩铁", "游戏"],
+    "task": ["发我", "给我", "帮我", "处理", "改一下", "看一下", "做一下", "整理", "查一下", "确认一下", "弄一下"],
+    "image": ["图片", "照片", "截图", "[图片]", "[表情]", "[动画表情]", "这个图", "这张图"],
+    "reality_state": ["忙", "有空", "在不在", "在吗", "在哪", "哪里", "做完", "好了没", "到哪", "来不来", "睡了吗", "醒了吗", "起了吗", "方便吗"],
+    "high_risk_commitment": ["密码", "验证码", "账号", "账户", "登录", "登一下", "借号", "身份证", "银行卡", "转账", "打钱", "借钱", "还钱", "收款", "付款", "支付", "合同", "签字", "签一下", "授权", "确认收款", "发票"],
+    "formal_work": ["项目", "需求", "代码", "文档", "论文", "老师", "作业", "实验", "汇报", "会议", "修改", "接口", "部署", "报错", "数据", "模型", "训练", "截止"],
+    "emotional": ["烦", "难受", "崩", "气死", "离谱", "笑死", "草", "服了", "骂", "猪", "傻", "哭", "哈哈", "绷不住", "急了"],
+    "explain": ["讲下", "讲讲", "解释", "逻辑", "原理", "大概是什么", "怎么理解", "展开说", "细说一下", "说清楚"]
+  },
+  "intent_patterns": {
+    "play_invite": "(有无|有没有|打不打|玩不玩|开不开|上不上|来不来|要不要).{0,8}"
+  },
+  "intent_question_type_priority": [
+    {"type": "game_invitation", "any": ["game_invitation"]},
+    {"type": "availability_or_reality", "any": ["availability_query", "reality_state_query"]},
+    {"type": "help_request", "any": ["help_request"]},
+    {"type": "invitation", "any": ["invitation"]},
+    {"type": "task_request", "any": ["task_request"]},
+    {"type": "general_question", "any": ["is_question"]},
+    {"type": "statement", "default": true}
+  ],
+  "commitment_risk_rules": [
+    {"level": 3, "label": "high_risk_action", "reasons": ["credential_finance_or_formal_commitment"], "any": ["high_risk_request"]},
+    {"level": 0, "label": "phatic_social", "reasons": ["game_invitation_as_social_probe"], "any": ["game_invitation"], "none": ["high_risk_request"]},
+    {"level": 2, "label": "state_declaration", "reasons": ["depends_on_owner_current_reality"], "any": ["availability_query", "reality_state_query"]},
+    {"level": 1, "label": "information_or_light_action", "reasons": ["may_need_context_or_light_followup"], "any": ["help_request", "task_request", "invitation", "is_question"]},
+    {"level": 0, "label": "phatic_social", "reasons": ["low_risk_social_reply"], "default": true}
+  ],
+  "reply_prefixes": {
+    "negative": ["不", "没", "别", "不是", "不会", "不用", "没有", "不太", "别急"],
+    "confirm": ["行", "可以", "好", "嗯", "对", "是", "ok", "OK", "收到", "没问题", "可以啊"]
+  },
+  "particle_pattern": "(吧|啊|呀|呢|嘛|呗|啦|哈|哇|哦|噢|欸|诶|草|笑死|绷不住)",
+  "ai_assistant_markers": ["有什么我可以帮", "我可以帮你", "随时准备协助", "刚上线", "好问题", "让我帮你", "让我来", "让我先", "让我仔细", "我发现了问题", "以下是", "整理如下", "方案 1", "方案1", "步骤", "总结一下", "已成功创建", "验证文件", "读取 transcript", "视觉描述", "OCR 文字", "OpenClaw", "Claude Code", "subagent", "skill", "web_fetch", "prompt", "API 调用", "模型", "代码块", "```"]
+}

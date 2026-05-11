@@ -32,81 +32,50 @@ from ...style_skill import (
     format_style_skill_context_for_prompt,
     load_style_skill_context,
 )
+from .settings import DISTILL_SETTINGS, PROJECT_ROOT
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
-DEFAULT_SELF_UIN = os.getenv("QQBOT_STYLE_SELF_UIN", "").strip()
-DEFAULT_EXPORT_ROOT = Path(os.getenv("QQBOT_STYLE_EXPORT_ROOT") or (PROJECT_ROOT.parent / "qq-chat-exports"))
+DEFAULT_SELF_UIN = os.getenv("QQBOT_STYLE_SELF_UIN", DISTILL_SETTINGS.str_value("identity.self_uin", "")).strip()
+DEFAULT_EXPORT_ROOT = Path(
+    os.getenv("QQBOT_STYLE_EXPORT_ROOT")
+    or DISTILL_SETTINGS.path_value("paths.export_root", PROJECT_ROOT.parent / "qq-chat-exports")
+)
 DEFAULT_QCE_INPUT_DIR_ENV = os.getenv("QQBOT_STYLE_QCE_INPUT_DIR", "").strip()
-DEFAULT_EXCLUDED_RELATIONSHIP_IDS = {"2920249374", "4011238485", "4018851780", "4019116505"}
-MAX_INDEX_SAMPLES = 5000
-MAX_REPLY_LENGTH = 280
-MAX_CONTEXT_MESSAGES = 8
-CONTEXT_WINDOW_SECONDS = 30 * 60
-TURN_MERGE_SECONDS = 60
-PRIVATE_CONTEXT_TURNS = 12
-GROUP_CONTEXT_TURNS = 8
-GROUP_CONTEXT_WINDOW_SECONDS = 10 * 60
-MAX_RELATIONSHIP_PROFILES = 500
-DEFAULT_RETRIEVAL_LIMIT = 6
-DEFAULT_GENERATION_CONTEXT_LIMIT = 5
-DEFAULT_RAW_FEWSHOT_LIMIT = 3
-MAX_RAW_FEWSHOT_TEXT_CHARS = 180
-MIN_RAW_FEWSHOT_SIMILARITY = 0.26
-MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD = 0.08
+DEFAULT_EXCLUDED_RELATIONSHIP_IDS = set(DISTILL_SETTINGS.str_list("excluded_relationship_ids"))
+MAX_INDEX_SAMPLES = DISTILL_SETTINGS.int_value("limits.max_index_samples", 5000)
+MAX_REPLY_LENGTH = DISTILL_SETTINGS.int_value("limits.max_reply_length", 280)
+MAX_CONTEXT_MESSAGES = DISTILL_SETTINGS.int_value("limits.max_context_messages", 8)
+CONTEXT_WINDOW_SECONDS = DISTILL_SETTINGS.int_value("limits.context_window_seconds", 1800)
+TURN_MERGE_SECONDS = DISTILL_SETTINGS.int_value("limits.turn_merge_seconds", 60)
+PRIVATE_CONTEXT_TURNS = DISTILL_SETTINGS.int_value("limits.private_context_turns", 12)
+GROUP_CONTEXT_TURNS = DISTILL_SETTINGS.int_value("limits.group_context_turns", 8)
+GROUP_CONTEXT_WINDOW_SECONDS = DISTILL_SETTINGS.int_value("limits.group_context_window_seconds", 600)
+MAX_RELATIONSHIP_PROFILES = DISTILL_SETTINGS.int_value("limits.max_relationship_profiles", 500)
+DEFAULT_RETRIEVAL_LIMIT = DISTILL_SETTINGS.int_value("limits.default_retrieval_limit", 6)
+DEFAULT_GENERATION_CONTEXT_LIMIT = DISTILL_SETTINGS.int_value("limits.default_generation_context_limit", 5)
+DEFAULT_RAW_FEWSHOT_LIMIT = DISTILL_SETTINGS.int_value("limits.default_raw_fewshot_limit", 3)
+MAX_RAW_FEWSHOT_TEXT_CHARS = DISTILL_SETTINGS.int_value("limits.max_raw_fewshot_text_chars", 180)
+MIN_RAW_FEWSHOT_SIMILARITY = DISTILL_SETTINGS.float_value("limits.min_raw_fewshot_similarity", 0.26)
+MIN_RAW_FEWSHOT_TEXT_OR_KEYWORD = DISTILL_SETTINGS.float_value("limits.min_raw_fewshot_text_or_keyword", 0.08)
 
-QUESTION_HINTS = (
-    "吗", "么", "呢", "吧", "怎么", "咋", "咋办", "为啥", "为什么", "什么",
-    "哪个", "哪一个", "哪里", "在哪", "哪儿", "多少", "几", "能不能",
-    "可不可以", "要不要", "是不是", "有没有", "有无", "行不行", "好不好",
-    "打不打", "玩不玩", "开不开", "上不上",
-)
-AVAILABILITY_HINTS = (
-    "忙不忙", "忙吗", "有空", "空吗", "在不在", "在吗", "睡了吗", "醒了吗",
-    "起了吗", "在哪", "哪里", "到哪", "来不来", "能来", "方便吗",
-)
-HELP_HINTS = (
-    "怎么弄", "咋弄", "怎么搞", "咋搞", "怎么处理", "怎么办", "咋办",
-    "帮我", "帮忙", "看下", "看看", "能不能帮", "会不会", "教我",
-)
-INVITATION_HINTS = (
-    "一起", "吃饭", "喝", "见面", "出来", "来吗", "去吗", "约", "今晚",
-    "明天", "周末", "要不要来", "要不要去", "打不打", "玩不玩",
-    "开不开", "上不上",
-)
-GAME_HINTS = (
-    "瓦", "瓦罗兰特", "瓦洛兰特", "无畏契约", "valorant", "lol", "联盟",
-    "王者", "农", "apex", "cs", "csgo", "cs2", "原神", "崩铁", "游戏",
-)
-TASK_HINTS = (
-    "发我", "给我", "帮我", "处理", "改一下", "看一下", "做一下", "整理",
-    "查一下", "确认一下", "弄一下",
-)
-IMAGE_HINTS = ("图片", "照片", "截图", "[图片]", "[表情]", "[动画表情]", "这个图", "这张图")
-REALITY_STATE_HINTS = (
-    "忙", "有空", "在不在", "在吗", "在哪", "哪里", "做完", "好了没",
-    "到哪", "来不来", "睡了吗", "醒了吗", "起了吗", "方便吗",
-)
-HIGH_RISK_COMMITMENT_HINTS = (
-    "密码", "验证码", "账号", "账户", "登录", "登一下", "借号", "身份证",
-    "银行卡", "转账", "打钱", "借钱", "还钱", "收款", "付款", "支付",
-    "合同", "签字", "签一下", "授权", "确认收款", "发票",
-)
-FORMAL_WORK_HINTS = (
-    "项目", "需求", "代码", "文档", "论文", "老师", "作业", "实验", "汇报",
-    "会议", "修改", "接口", "部署", "报错", "数据", "模型", "训练", "截止",
-)
-EMOTIONAL_HINTS = (
-    "烦", "难受", "崩", "气死", "离谱", "笑死", "草", "服了", "骂", "猪",
-    "傻", "哭", "哈哈", "绷不住", "急了",
-)
-EXPLAIN_HINTS = (
-    "讲下", "讲讲", "解释", "逻辑", "原理", "大概是什么", "怎么理解",
-    "展开说", "细说一下", "说清楚",
-)
-NEGATIVE_PREFIXES = ("不", "没", "别", "不是", "不会", "不用", "没有", "不太", "别急")
-CONFIRM_PREFIXES = ("行", "可以", "好", "嗯", "对", "是", "ok", "OK", "收到", "没问题", "可以啊")
-PARTICLE_RE = re.compile(r"(吧|啊|呀|呢|嘛|呗|啦|哈|哇|哦|噢|欸|诶|草|笑死|绷不住)")
+QUESTION_HINTS = DISTILL_SETTINGS.str_list("intent_hints.question")
+AVAILABILITY_HINTS = DISTILL_SETTINGS.str_list("intent_hints.availability")
+HELP_HINTS = DISTILL_SETTINGS.str_list("intent_hints.help")
+INVITATION_HINTS = DISTILL_SETTINGS.str_list("intent_hints.invitation")
+GAME_HINTS = DISTILL_SETTINGS.str_list("intent_hints.game")
+TASK_HINTS = DISTILL_SETTINGS.str_list("intent_hints.task")
+IMAGE_HINTS = DISTILL_SETTINGS.str_list("intent_hints.image")
+REALITY_STATE_HINTS = DISTILL_SETTINGS.str_list("intent_hints.reality_state")
+HIGH_RISK_COMMITMENT_HINTS = DISTILL_SETTINGS.str_list("intent_hints.high_risk_commitment")
+FORMAL_WORK_HINTS = DISTILL_SETTINGS.str_list("intent_hints.formal_work")
+EMOTIONAL_HINTS = DISTILL_SETTINGS.str_list("intent_hints.emotional")
+EXPLAIN_HINTS = DISTILL_SETTINGS.str_list("intent_hints.explain")
+NEGATIVE_PREFIXES = DISTILL_SETTINGS.str_list("reply_prefixes.negative")
+CONFIRM_PREFIXES = DISTILL_SETTINGS.str_list("reply_prefixes.confirm")
+PLAY_INVITE_RE = re.compile(DISTILL_SETTINGS.str_value("intent_patterns.play_invite", r"(?!)"))
+QUESTION_TYPE_RULES = DISTILL_SETTINGS.dict_list("intent_question_type_priority")
+COMMITMENT_RISK_RULES = DISTILL_SETTINGS.dict_list("commitment_risk_rules")
+PARTICLE_RE = re.compile(DISTILL_SETTINGS.str_value("particle_pattern", r"(?!)"))
 TEXT_ONLY_ELEMENTS = {"text", "reply", "at"}
 MEDIA_DEPENDENT_ELEMENTS = {
     "image", "pic", "picture", "face", "market_face", "mface", "emoji", "video",
@@ -131,14 +100,7 @@ EMOJI_RE = re.compile(
 MARKDOWN_STRUCTURE_RE = re.compile(r"(^|\n)\s{0,3}(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+|>\s+)", flags=re.M)
 MARKDOWN_TABLE_RE = re.compile(r"\|[^|\n]+(?:\|[^|\n]+)+\|")
 AI_IDENTITY_RE = re.compile(r"(我是|我叫).{0,20}(?:AI|ai|机器人|助手|科研伙伴|数字伙伴)")
-AI_ASSISTANT_MARKERS = (
-    "有什么我可以帮", "我可以帮你", "随时准备协助", "刚上线", "好问题",
-    "让我帮你", "让我来", "让我先", "让我仔细", "我发现了问题",
-    "以下是", "整理如下", "方案 1", "方案1", "步骤", "总结一下",
-    "已成功创建", "验证文件", "读取 transcript", "视觉描述", "OCR 文字",
-    "OpenClaw", "Claude Code", "subagent", "skill", "web_fetch", "prompt",
-    "API 调用", "模型", "代码块", "```",
-)
+AI_ASSISTANT_MARKERS = DISTILL_SETTINGS.str_list("ai_assistant_markers")
 
 
 @dataclass(frozen=True)

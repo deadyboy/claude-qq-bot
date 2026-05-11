@@ -4,15 +4,49 @@ from .qce_io import *
 from .phrases import *
 
 
+def _intent_rule_matches(rule: Dict[str, Any], flags: Dict[str, bool]) -> bool:
+    if rule.get("default"):
+        return True
+    any_flags = [str(item) for item in (rule.get("any") or [])]
+    all_flags = [str(item) for item in (rule.get("all") or [])]
+    none_flags = [str(item) for item in (rule.get("none") or [])]
+    if any_flags and not any(flags.get(item) for item in any_flags):
+        return False
+    if all_flags and not all(flags.get(item) for item in all_flags):
+        return False
+    if none_flags and any(flags.get(item) for item in none_flags):
+        return False
+    return bool(any_flags or all_flags or none_flags)
+
+
+def _question_type_from_rules(flags: Dict[str, bool]) -> str:
+    for rule in QUESTION_TYPE_RULES:
+        if _intent_rule_matches(rule, flags):
+            return str(rule.get("type") or "statement")
+    return "statement"
+
+
+def _commitment_risk_from_rules(flags: Dict[str, bool]) -> tuple[int, str, List[str]]:
+    for rule in COMMITMENT_RISK_RULES:
+        if not _intent_rule_matches(rule, flags):
+            continue
+        try:
+            level = int(rule.get("level", 0))
+        except (TypeError, ValueError):
+            level = 0
+        label = str(rule.get("label") or "phatic_social")
+        reasons = [str(item) for item in (rule.get("reasons") or []) if str(item)]
+        return max(0, min(3, level)), label, reasons
+    return 0, "phatic_social", ["low_risk_social_reply"]
+
+
 def detect_message_intent(text: str) -> Dict[str, Any]:
     """Detect coarse Chinese chat intent without requiring explicit question marks."""
     normalized = re.sub(r"\s+", "", str(text or "").lower())
     has_mark = "?" in normalized or "？" in normalized
     has_question_hint = _contains_any(normalized, QUESTION_HINTS)
     has_game_term = _contains_any(normalized, GAME_HINTS)
-    has_play_invite_pattern = bool(
-        re.search(r"(有无|有没有|打不打|玩不玩|开不开|上不上|来不来|要不要).{0,8}", normalized)
-    )
+    has_play_invite_pattern = bool(PLAY_INVITE_RE.search(normalized))
     game_invitation = has_game_term and has_play_invite_pattern
     availability_query = _contains_any(normalized, AVAILABILITY_HINTS)
     help_request = _contains_any(normalized, HELP_HINTS)
@@ -28,43 +62,22 @@ def detect_message_intent(text: str) -> Dict[str, Any]:
         or help_request
         or invitation
     )
-
-    if game_invitation:
-        question_type = "game_invitation"
-    elif availability_query or reality_state_query:
-        question_type = "availability_or_reality"
-    elif help_request:
-        question_type = "help_request"
-    elif invitation:
-        question_type = "invitation"
-    elif task_request:
-        question_type = "task_request"
-    elif is_question:
-        question_type = "general_question"
-    else:
-        question_type = "statement"
-
-    commitment_reasons = []
-    if high_risk_request:
-        commitment_risk_level = 3
-        commitment_risk_label = "high_risk_action"
-        commitment_reasons.append("credential_finance_or_formal_commitment")
-    elif availability_query or reality_state_query:
-        commitment_risk_level = 2
-        commitment_risk_label = "state_declaration"
-        commitment_reasons.append("depends_on_owner_current_reality")
-    elif help_request or task_request or (invitation and not game_invitation) or (is_question and not game_invitation):
-        commitment_risk_level = 1
-        commitment_risk_label = "information_or_light_action"
-        commitment_reasons.append("may_need_context_or_light_followup")
-    else:
-        commitment_risk_level = 0
-        commitment_risk_label = "phatic_social"
-        commitment_reasons.append("low_risk_social_reply")
-    if game_invitation and not high_risk_request:
-        commitment_risk_level = 0
-        commitment_risk_label = "phatic_social"
-        commitment_reasons = ["game_invitation_as_social_probe"]
+    flags = {
+        "is_question": is_question,
+        "game_invitation": game_invitation,
+        "availability_query": availability_query,
+        "help_request": help_request,
+        "invitation": invitation,
+        "task_request": task_request,
+        "image_reference": image_reference,
+        "reality_state_query": reality_state_query,
+        "high_risk_request": high_risk_request,
+        "question_mark": has_mark,
+        "question_hint": has_question_hint,
+        "game_term": has_game_term,
+    }
+    question_type = _question_type_from_rules(flags)
+    commitment_risk_level, commitment_risk_label, commitment_reasons = _commitment_risk_from_rules(flags)
 
     return {
         "is_question": is_question,
