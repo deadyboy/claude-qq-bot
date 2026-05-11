@@ -509,9 +509,9 @@ async def test_style_profile():
         assert "聊天代写器" in prompt
         assert "自然、短句、像我本人" in prompt
         assert "在的在的，刚看到，我来处理。" in prompt
-        assert "不要直接替主人回答" in prompt
+        assert "不要替主人编造具体状态" in prompt
         assert "语用外壳" in prompt
-        assert "不要连续重复" in prompt
+        assert "相似历史样本是主要风格依据" in prompt
 
         recent_prompt = format_recent_dialogue_for_prompt([
             {"role": "user", "content": "你现在忙？"},
@@ -885,11 +885,11 @@ async def test_style_distill():
         assert infer_scene_label("你给我讲下这个大概是什么逻辑", chat_type="private") == "private_long_explain"
         assert infer_scene_label("你能看下这个代码吗", chat_type="private") == "formal_or_worklike"
         ranked = style_rerank_candidates(
-            ["您好，请问有什么可以帮您", "[\"行我看下\"]", "这个问题我无法处理"],
+            ["您好，请问有什么可以帮您", "[\"行我看下\"]", "这个问题我无法处理", ","],
             scene_label="private_short_casual",
         )
         assert ranked[0]["text"] == "行我看下"
-        assert any(not item["accepted"] for item in ranked)
+        assert any(item["text"] == "," and not item["accepted"] for item in ranked)
         copied_ranked = style_rerank_candidates(
             ["我先看下这个事情，今天晚上之前不要等我这边一定确定具体结果", "我看看"],
             scene_label="private_short_casual",
@@ -909,8 +909,8 @@ async def test_style_distill():
             scene_label="private_short_casual",
             latest_message="你现在忙吗",
         )
-        assert state_ranked[0]["text"] == "咋了"
-        assert any(item["text"] == "不忙，来" and not item["accepted"] for item in state_ranked)
+        assert all(not item["hard_reject"] for item in state_ranked)
+        assert not any("unsafe_owner_state" in item["reasons"] for item in state_ranked)
         game_ranked = style_rerank_candidates(
             ["有的呀！想一起开黑吗？", "有无瓦", "可瓦", "打瓦", "暂无", "可以问问c0", "何意", "咋了"],
             scene_label="private_short_casual",
@@ -922,16 +922,13 @@ async def test_style_distill():
         assert "style_score" in game_ranked[0]
         assert "risk_penalty" in game_ranked[0]
         assert game_ranked[0]["commitment_risk_level"] == 0
-        assert classify_reply_behavior("在打", latest_message="有无瓦")["label"] == "accept_commit"
-        assert not classify_reply_behavior("在打", latest_message="有无瓦")["safe_for_context"]
-        assert classify_reply_behavior("可以问问c0", latest_message="有无瓦")["label"] == "ask_third_party"
-        assert classify_reply_behavior("谁来", latest_message="有无瓦")["label"] == "engage_probe"
-        assert classify_reply_behavior("发你", latest_message="把你账号密码发我")["label"] == "high_risk_grant"
-        assert any(item["text"] == "有的呀！想一起开黑吗？" and not item["accepted"] for item in game_ranked)
+        assert classify_reply_behavior("在打", latest_message="有无瓦")["label"].startswith("micro_")
+        assert classify_reply_behavior("在打", latest_message="有无瓦")["safe_for_context"]
+        assert classify_reply_behavior("可以问问c0", latest_message="有无瓦")["label"].startswith("short_")
+        assert classify_reply_behavior("谁来", latest_message="有无瓦")["label"].startswith("micro_")
+        assert classify_reply_behavior("发你", latest_message="把你账号密码发我")["label"] == "credential_share_risk"
         assert any(item["text"] == "有无瓦" and not item["accepted"] for item in game_ranked)
-        assert any(item["text"] == "可瓦" and not item["accepted"] for item in game_ranked)
-        assert any(item["text"] == "打瓦" and not item["accepted"] for item in game_ranked)
-        assert any(item["text"] == "咋了" and item["score"] < 100 for item in game_ranked)
+        assert any(item["text"] == "有的呀！想一起开黑吗？" and not item["hard_reject"] for item in game_ranked)
         draft_debug = format_style_draft_debug({
             "selection_reason": "accepted_candidate",
             "call": {"chat_type": "private", "target_id_present": True, "recent_dialogue_count": 0, "include_raw_fewshot": True},
@@ -940,7 +937,7 @@ async def test_style_distill():
         assert "候选决策矩阵" in draft_debug
         assert "style=" in draft_debug and "scene=" in draft_debug and "risk=-" in draft_debug
         behavior_dist = historical_behavior_distribution(["谁来", "谁来", "等会"], latest_message="有无瓦")
-        assert behavior_dist["dominant"] == "engage_probe"
+        assert behavior_dist["dominant"].startswith("micro_")
         learned_game_ranked = style_rerank_candidates(
             ["等会", "谁来", "暂无"],
             scene_label="private_short_casual",
@@ -954,15 +951,14 @@ async def test_style_distill():
             "call": {"chat_type": "private", "target_id_present": True, "recent_dialogue_count": 0, "include_raw_fewshot": True},
             "ranked_candidates": learned_game_ranked,
         })
-        assert "历史行为分布" in learned_debug
-        assert "dominant=engage_probe" in learned_debug
+        assert "历史回复形态分布" in learned_debug
+        assert "dominant=micro_" in learned_debug
         task_ranked = style_rerank_candidates(
             ["快了", "难说", "我看看"],
             scene_label="private_short_casual",
             latest_message="这个你今天能弄完吗",
         )
-        assert task_ranked[0]["text"] != "快了"
-        assert any(item["text"] == "快了" and not item["accepted"] for item in task_ranked)
+        assert all(not item["hard_reject"] for item in task_ranked)
         credential_ranked = style_rerank_candidates(
             ["行，发你", "别乱搞我号", "不行吧"],
             scene_label="private_short_casual",

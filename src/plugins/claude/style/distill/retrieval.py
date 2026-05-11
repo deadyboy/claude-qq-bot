@@ -276,8 +276,6 @@ def retrieve_similar_style_samples(
         intent_bonus = _intent_similarity(query_intent, context_intent)
         if overlap <= 0 and keyword_overlap <= 0 and intent_bonus < 0.08:
             continue
-        if query_intent.get("game_invitation") and overlap <= 0 and keyword_overlap <= 0:
-            continue
         reply = sample.get("reply") or {}
         feature_bonus = 0.0
         if bool(query_features["has_question"]) == bool(reply.get("features", {}).get("has_question")):
@@ -604,13 +602,7 @@ def _derive_generation_guidance(
     intent = query_features.get("intent") or {}
     risk_level = int(intent.get("commitment_risk_level") or 0)
     risk_label = str(intent.get("commitment_risk_label") or "phatic_social")
-    if intent.get("game_invitation"):
-        target_length = min(target_length, 12)
-        length_instruction = "优先 3-12 字短回复，像自然邀约接话"
-    elif intent.get("invitation"):
-        target_length = min(target_length, 14)
-        length_instruction = "优先 6-14 字短回复，不直接承诺"
-    elif target_length <= 8:
+    if target_length <= 8:
         length_instruction = "优先 3-8 字短回复"
     elif target_length <= 18:
         length_instruction = "优先 8-18 字中短回复"
@@ -621,22 +613,10 @@ def _derive_generation_guidance(
 
     if risk_level >= 3:
         stance = "对方涉及账号、凭据、钱或严肃确认时，必须守住硬边界；可以用主人的语气拒绝或要求主人亲自确认。"
-    elif intent.get("game_invitation"):
-        stance = "对方在发低风险游戏/社交邀约时，优先像主人一样短句接话；可自然拒绝、含糊拖延、问第三人或反问，不要用 AI 式热情邀约。"
     elif intent.get("availability_query") or intent.get("reality_state_query"):
         stance = "对方在问主人现实状态或可用性时，保留主人的口气，但把具体忙闲、位置、进度等事实模糊化。"
-    elif intent.get("help_request"):
-        stance = "对方在求助时，先接住请求；信息不足时让对方发具体内容或说明卡在哪一步。"
-    elif intent.get("invitation"):
-        stance = "对方在邀约时，不要直接承诺主人会去；优先用模糊过渡或确认细节。"
-    elif intent.get("task_request"):
-        stance = "对方在安排任务时，先确认收到或询问关键信息，不要编造已经完成。"
-    elif query_features.get("has_question"):
-        stance = "对方在提问时，先自然回应；涉及现实状态或承诺时不要替主人确认。"
-    elif query_features.get("has_exclamation"):
-        stance = "对方情绪较强时，先短句接住语气，再给轻量回应。"
     else:
-        stance = "普通消息优先自然短句，不要过度解释。"
+        stance = "优先从相似历史样本归纳主人通常如何接话；不要套用固定场景模板。"
 
     return {
         "target_reply_length": target_length,

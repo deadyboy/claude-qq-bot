@@ -1219,6 +1219,9 @@ async def handle_simple_chat(
                 record_dialogue=True,
             )
             response = format_reply(str(result.get("draft") or ""))
+            if not response:
+                await send_qq_text(bot, event, "风格草稿生成失败：没有可用候选。")
+                return
             for part in split_qq_msg(response):
                 await send_qq_text(bot, event, part)
         except Exception as e:

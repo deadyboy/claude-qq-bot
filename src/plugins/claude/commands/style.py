@@ -36,6 +36,9 @@ async def handle_style_draft(
         )
         draft = str(result.get("draft") or "")
         draft_text = format_reply(draft)
+        if not draft_text:
+            await send_qq_text(bot, event, "风格草稿生成失败：没有可用候选。")
+            return
         review = teaching_store.create_review(
             message=payload,
             candidates=[draft_text],

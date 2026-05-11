@@ -984,7 +984,7 @@ def format_generation_context_for_prompt(context: Dict[str, Any] | None) -> str:
         f"- 数据就绪度：{context.get('readiness')}",
     ]
     if context.get("raw_fewshot_included"):
-        lines.append("- 历史原文策略：已由主人授权，将少量真实历史原句作为 few-shot 提供给模型；不要照抄隐私事实。")
+        lines.append("- 历史原文策略：已由主人授权，将少量真实历史原句作为 few-shot 提供给模型；学习表达结构并替换不适用的具体事实。")
     else:
         lines.append("- 历史原文策略：不向模型提供历史原文；只使用相似度、长度、场景、关系标签等元数据。")
     target_mapping = context.get("target_mapping") or {}
@@ -1115,12 +1115,11 @@ def build_style_system_prompt(
     lines = [
         "你是“主人”的聊天代写器，任务是尽量像主人本人一样生成一条可复制的中文回复草稿。",
         "只输出草稿正文，不要解释，不要加标题。",
-        "首要目标是像主人真实聊天：短促、自然、有个人口癖，避免通用 AI 助手腔。",
+        "首要目标是像主人真实聊天：自然、有个人口癖，避免通用 AI 助手腔。",
         "不要声称自己是机器人；涉及未知现实状态时只模糊处理，不要编造具体事实。",
         "必须先理解并回应对方当前消息，不要用万能寒暄敷衍。",
-        "对低风险社交接话和游戏邀约，优先模仿主人历史里的短句、反问、拖延、拒绝或问第三人的方式，不要自动变热情客服。",
-        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，保留主人口气但模糊事实，不要直接替主人回答“在家/不忙/已经做了”。",
-        "不要连续重复同一句或同一个口头禅；如果最近已经说过“刚看到”，下一条不要再用。",
+        "当前可见的相似历史样本是主要风格依据；优先从样本中归纳主人会如何接话，而不是套用通用助手礼貌表达。",
+        "如果对方询问主人当前状态、位置、是否有空、是否完成某事等未知现实事实，保留主人口气但不要替主人编造具体状态。",
         "遇到[表情]、[动画表情]、[图片]时，可以按语气接话，但不要假装看清图片具体内容。",
         "看到历史真实样本时，拆出[语用外壳]+[实体内容]：学习句式骨架、口癖和停顿方式，替换样本里的具体实体事实。",
     ]
@@ -1139,13 +1138,13 @@ def build_style_system_prompt(
         lines.append("避免：")
         lines.extend(f"- {item}" for item in data["avoid"][:10])
     if data.get("common_phrases"):
-        lines.append("可参考的常见表达；只当风味，不要连续照搬：")
+        lines.append("可参考的常见表达；它们是主人真实口癖的一部分：")
         lines.extend(f"- {item}" for item in data["common_phrases"][:8])
     if data.get("punctuation"):
         lines.append("标点习惯：")
         lines.extend(f"- {item}" for item in data["punctuation"][:5])
     if data.get("examples"):
-        lines.append("主人真实回复样本，学习句式骨架和口癖，不要照搬具体事实：")
+        lines.append("主人真实回复样本，学习句式骨架和口癖，替换不适用于当前语境的具体事实：")
         for example in data["examples"][-5:]:
             lines.append(f"- {example['text']}")
     context_prompt = format_generation_context_for_prompt(generation_context)
@@ -1180,7 +1179,11 @@ def _parse_draft_candidates(raw: str) -> List[str]:
 
 def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None) -> str:
     """System-level fallback only, used when generation/rerank yields nothing usable."""
-    return "我看看"
+    for example in (generation_context or {}).get("few_shot_examples") or []:
+        text = re.sub(r"\s+", " ", str(example.get("owner_reply") or "")).strip()
+        if text and 1 <= len(text) <= 80:
+            return text
+    return ""
 
 
 def _audit_style_generation(
@@ -1350,13 +1353,13 @@ async def generate_style_draft_result(
     if selected is None and ranked:
         for item in ranked:
             best = str(item.get("text") or "").strip()
-            if best and not item.get("hard_reject") and int(item.get("score") or 0) >= 42:
+            if best and not item.get("hard_reject") and int(item.get("score") or 0) >= 30:
                 selected = best
                 selection_reason = "soft_low_score_candidate"
                 break
     if selected is None:
         selected = _fallback_style_draft(target, generation_context)
-        selection_reason = "fallback"
+        selection_reason = "fallback_from_history" if selected else "no_usable_candidate"
     return {
         "ok": True,
         "draft": selected,
@@ -1398,7 +1401,7 @@ def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
         counts = distribution.get("counts") or {}
         pieces = [f"{key}={value}" for key, value in sorted(counts.items())[:8]]
         lines.append(
-            f"- 历史行为分布：n={distribution.get('sample_count')} "
+            f"- 历史回复形态分布：n={distribution.get('sample_count')} "
             f"dominant={distribution.get('dominant') or 'unknown'} "
             + " ".join(pieces)
         )
@@ -1418,7 +1421,7 @@ def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
             f"style={item.get('style_score')} scene={item.get('scene_score')} "
             f"risk=-{item.get('risk_penalty')} hygiene=-{item.get('hygiene_penalty')} "
             f"L{item.get('commitment_risk_level', 0)}:{item.get('commitment_risk_label')} "
-            f"behavior={item.get('behavior')} text={item.get('text')} "
+            f"shape={item.get('behavior')} text={item.get('text')} "
             f"reasons={reasons}{hard}"
         )
     return "\n".join(lines)
