@@ -9,7 +9,7 @@
 ```
 API 地址：https://api.llm.ustc.edu.cn/v1
 API Key: 请在 `.env` 中配置，不要写入文档
-默认模型：qwen-chat
+默认模型：deepseek-v4-pro
 ```
 
 ### 可用模型
@@ -63,7 +63,7 @@ python bot.py
 | @机器人 你好 | 与 AI 对话 |
 | /clear | 清空对话历史 |
 | /model | 查看当前模型 |
-| /model deepseek-v4-flash | 切换模型 |
+| /model deepseek-v4-pro | 切换模型 |
 
 ---
 

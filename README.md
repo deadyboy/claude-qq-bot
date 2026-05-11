@@ -44,7 +44,7 @@ pip install -e .
 ONEBOT_WS_URL=ws://127.0.0.1:6700
 LLM_API_BASE=https://api.llm.ustc.edu.cn/v1
 LLM_API_KEY=sk-xxxxx
-LLM_MODEL=qwen-chat
+LLM_MODEL=deepseek-v4-pro
 ```
 
 ### 4. 启动机器人

@@ -22,7 +22,7 @@ class LLMClient:
     ):
         self.base_url = base_url or os.getenv("LLM_API_BASE", "https://api.llm.ustc.edu.cn/v1")
         self.api_key = api_key or os.getenv("LLM_API_KEY")
-        self.model = model or os.getenv("LLM_MODEL", "qwen-chat")
+        self.model = model or os.getenv("LLM_MODEL", "deepseek-v4-pro")
 
         self.client = self._build_client()
 

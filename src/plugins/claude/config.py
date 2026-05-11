@@ -25,7 +25,7 @@ class ModelConfig:
         if self._initialized:
             return
 
-        self.model = os.getenv("LLM_MODEL", "qwen-chat")
+        self.model = os.getenv("LLM_MODEL", "deepseek-v4-pro")
         self.api_base = os.getenv("LLM_API_BASE") or SUPPORTED_MODELS.get(
             self.model,
             "https://api.llm.ustc.edu.cn/v1"
