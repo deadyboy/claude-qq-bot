@@ -188,6 +188,12 @@ def classify_reply_behavior(text: str, *, latest_message: str = "") -> Dict[str,
         elif compact in {"何意", "何意味", "什么意思"}:
             result["label"] = "clarify"
             result["reasons"].append("safe_game_clarify")
+        elif (
+            any(marker in compact for marker in ("段位", "几排", "几缺", "啥段", "什么段", "哪个服", "哪个区", "谁在"))
+            or compact.startswith(("啥", "咋说", "怎么说", "谁", "几个"))
+        ):
+            result["label"] = "engage_probe"
+            result["reasons"].append("game_engagement_probe")
         elif compact in {"咋了", "咋说", "啥事", "干嘛"}:
             result["label"] = "weak_probe"
             result["reasons"].append("weak_game_probe")
@@ -203,6 +209,66 @@ def classify_reply_behavior(text: str, *, latest_message: str = "") -> Dict[str,
             result.update({"label": "owner_state_commit", "safe_for_context": False})
             result["reasons"].append("unknown_owner_reality_state")
     return result
+
+
+def historical_behavior_distribution(
+    historical_targets: Sequence[str] | None,
+    *,
+    latest_message: str = "",
+) -> Dict[str, Any]:
+    """Infer behavior preferences from retrieved owner replies for this query."""
+    counter: Counter[str] = Counter()
+    examples: Dict[str, List[str]] = {}
+    for target in historical_targets or []:
+        text = re.sub(r"\s+", " ", str(target or "")).strip()
+        if not text:
+            continue
+        behavior = classify_reply_behavior(text, latest_message=latest_message)
+        label = str(behavior.get("label") or "neutral")
+        counter[label] += 1
+        examples.setdefault(label, [])
+        if len(examples[label]) < 3:
+            examples[label].append(text[:24])
+    total = sum(counter.values())
+    if total <= 0:
+        return {
+            "sample_count": 0,
+            "counts": {},
+            "proportions": {},
+            "dominant": "",
+            "examples": {},
+        }
+    return {
+        "sample_count": total,
+        "counts": dict(counter),
+        "proportions": {label: round(count / total, 4) for label, count in counter.items()},
+        "dominant": counter.most_common(1)[0][0],
+        "examples": examples,
+    }
+
+
+def _historical_behavior_delta(
+    label: str,
+    distribution: Dict[str, Any],
+    *,
+    latest_intent: Dict[str, Any],
+) -> tuple[int, str]:
+    sample_count = int(distribution.get("sample_count") or 0)
+    if sample_count <= 0:
+        return 0, "no_behavior_history"
+    proportions = distribution.get("proportions") or {}
+    prop = float(proportions.get(label) or 0.0)
+    dominant = str(distribution.get("dominant") or "")
+    if prop >= 0.45:
+        return 24, f"history_behavior_match:{label}:{prop:.2f}"
+    if prop >= 0.22:
+        return 15, f"history_behavior_match:{label}:{prop:.2f}"
+    if prop >= 0.10:
+        return 7, f"history_behavior_minor:{label}:{prop:.2f}"
+    if latest_intent.get("game_invitation") and label in {"defer", "decline", "ask_third_party", "clarify"}:
+        if sample_count >= 3 and dominant and dominant != label:
+            return -7, f"history_behavior_not_dominant:{label}<>{dominant}"
+    return 0, f"history_behavior_unseen:{label}"
 
 def style_rerank_candidates(
     candidates: Sequence[str],
@@ -259,6 +325,7 @@ def style_rerank_candidates(
         for item in (historical_targets or [])
         if str(item or "").strip()
     ][:12]
+    behavior_distribution = historical_behavior_distribution(history_texts, latest_message=latest_message)
     profile_phrases = _profile_phrase_set(style_profile)
     ranked = []
     for raw in candidates:
@@ -372,6 +439,14 @@ def style_rerank_candidates(
             reasons.append("high_risk_grant")
             risk_reasons.extend(behavior.get("reasons") or [])
             hard_reject_reasons.append("high_risk_grant")
+        behavior_delta, behavior_reason = _historical_behavior_delta(
+            str(behavior.get("label") or "neutral"),
+            behavior_distribution,
+            latest_intent=latest_intent,
+        )
+        if behavior_delta:
+            scene_score += behavior_delta
+            scene_reasons.append(behavior_reason)
         if latest_intent.get("game_invitation"):
             if behavior["label"] == "assistant_invite":
                 style_score -= 22
@@ -383,13 +458,17 @@ def style_rerank_candidates(
                 risk_penalty += 34
                 reasons.append("unknown_game_availability_commit")
                 risk_reasons.append("game_availability_commitment")
-            if behavior["label"] in {"decline", "defer", "ask_third_party", "clarify"}:
-                scene_score += 24
+            if behavior["label"] in {"decline", "defer", "ask_third_party", "clarify", "engage_probe"}:
+                if behavior_distribution.get("sample_count"):
+                    scene_reasons.append("game_behavior_scored_by_history")
+                else:
+                    scene_score += 6
+                    scene_reasons.append("low_risk_game_behavior_baseline")
                 style_score += 4
-                reasons.append("safe_game_deflection")
-                scene_reasons.append("low_risk_game_social_reply")
+                reasons.append("low_risk_game_behavior")
             if behavior["label"] == "weak_probe":
-                scene_score -= 12
+                if not behavior_distribution.get("sample_count"):
+                    scene_score -= 12
                 reasons.append("weak_game_probe")
             if text.endswith(("！", "!")):
                 style_score -= 10
@@ -403,11 +482,16 @@ def style_rerank_candidates(
         elif commitment_level == 2 and behavior.get("label") == "owner_state_commit":
             risk_penalty += 18
             risk_reasons.append("state_declaration_level2")
-        if len(text) >= 3 and text in history_texts:
+        if len(text) >= 10 and text in history_texts:
             hygiene_penalty += 78
             reasons.append("copied_history_exact")
             hard_reject_reasons.append("copied_history_exact")
-        elif len(text) >= 6 and history_texts:
+        elif 3 <= len(text) < 10 and text in history_texts:
+            hygiene_penalty += 8
+            style_score += 4
+            reasons.append("reused_short_history_phrase")
+            persona_reasons.append("historical_short_phrase")
+        elif len(text) >= 10 and history_texts:
             similarity = max(
                 (_jaccard(_text_ngrams(text), _text_ngrams(target)) for target in history_texts),
                 default=0.0,
@@ -442,6 +526,11 @@ def style_rerank_candidates(
             "behavior": behavior.get("label"),
             "behavior_safe": bool(behavior.get("safe_for_context")),
             "behavior_reasons": behavior.get("reasons") or [],
+            "behavior_distribution": {
+                "sample_count": behavior_distribution.get("sample_count", 0),
+                "counts": behavior_distribution.get("counts", {}),
+                "dominant": behavior_distribution.get("dominant", ""),
+            },
         })
     ranked.sort(key=lambda item: (-int(item["score"]), len(item["text"]), item["text"]))
     return ranked

@@ -1288,6 +1288,7 @@ async def generate_style_draft_result(
             chat_type=chat_type,
             target_id=target_id,
             include_raw_fewshot=bool(include_raw_fewshot),
+            raw_fewshot_limit=8,
         )
     except Exception:
         generation_context = None
@@ -1391,7 +1392,17 @@ def format_style_draft_debug(result: Dict[str, Any], *, limit: int = 5) -> str:
         f"target_id={bool(call.get('target_id_present'))} "
         f"recent={call.get('recent_dialogue_count', 0)} raw={call.get('include_raw_fewshot')}"
     )
-    for index, item in enumerate((result.get("ranked_candidates") or [])[:max(1, int(limit))], start=1):
+    ranked_items = result.get("ranked_candidates") or []
+    distribution = (ranked_items[0].get("behavior_distribution") if ranked_items else None) or {}
+    if distribution.get("sample_count"):
+        counts = distribution.get("counts") or {}
+        pieces = [f"{key}={value}" for key, value in sorted(counts.items())[:8]]
+        lines.append(
+            f"- 历史行为分布：n={distribution.get('sample_count')} "
+            f"dominant={distribution.get('dominant') or 'unknown'} "
+            + " ".join(pieces)
+        )
+    for index, item in enumerate(ranked_items[:max(1, int(limit))], start=1):
         accepted = "Y" if item.get("accepted") else "N"
         reasons = ",".join(
             (
