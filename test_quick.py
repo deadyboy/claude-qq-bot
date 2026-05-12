@@ -125,12 +125,13 @@ from src.plugins.claude.style_skill import (
     select_relevant_corrections,
 )
 from src.plugins.claude import runtime_state
+from src.plugins.claude import dialogue as dialogue_module
 
 RUN_ID = uuid.uuid4().hex[:8]
 
 async def test_short_term():
     """测试短期记忆"""
-    print("[1/10] 测试短期记忆...")
+    print("[1/11] 测试短期记忆...")
     stm = ShortTermMemoryManager(max_messages=10, timeout=7200)
 
     session_id = f"test_quick_{RUN_ID}"
@@ -152,7 +153,7 @@ async def test_short_term():
 
 async def test_key_facts():
     """测试关键事实"""
-    print("[2/10] 测试关键事实...")
+    print("[2/11] 测试关键事实...")
     kfm = KeyFactManager()
     subject = f"user_test_{RUN_ID}"
 
@@ -203,7 +204,7 @@ async def test_key_facts():
 
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
-    print("[3/10] 测试自动记忆规则...")
+    print("[3/11] 测试自动记忆规则...")
     fake_secret = "s" + "k-" + "testsecret123456"
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
@@ -235,7 +236,7 @@ async def test_auto_memory_helpers():
 
 async def test_safe_tools():
     """测试低风险工具。"""
-    print("[4/10] 测试低风险工具...")
+    print("[4/11] 测试低风险工具...")
 
     assert safe_calculate("1 + 2 * 3") == "1 + 2 * 3 = 7"
     assert safe_calculate("2 ** 11").startswith("计算失败")
@@ -274,9 +275,66 @@ async def test_safe_tools():
     print("      通过")
     return True
 
+
+class _FakeSegment:
+    def __init__(self, segment_type, data=None):
+        self.type = segment_type
+        self.data = data or {}
+
+
+class _FakeMessage(list):
+    def extract_plain_text(self):
+        return "".join(
+            str(getattr(segment, "data", {}).get("text", ""))
+            for segment in self
+            if getattr(segment, "type", "") == "text"
+        )
+
+
+class _FakeEvent:
+    def __init__(self, segments):
+        self.message = _FakeMessage(segments)
+
+
+async def test_dialogue_image_helpers():
+    """测试图片提取限制和动画表情过滤。"""
+    print("[5/11] 测试对话图片辅助函数...")
+
+    event = _FakeEvent([
+        _FakeSegment("text", {"text": "看这个"}),
+        _FakeSegment("image", {"url": "https://example.com/a.png", "summary": "截图"}),
+        _FakeSegment("image", {"url": "https://example.com/face.gif", "summary": "动画表情"}),
+        _FakeSegment("image", {"url": "https://example.com/subtype.gif", "sub_type": "1"}),
+    ])
+    text, images = dialogue_module.extract_text_and_images(event)
+    assert "看这个" in text
+    assert "[图片:截图]" in text
+    assert text.count("[动画表情]") == 2
+    assert images == ["https://example.com/a.png"]
+
+    too_many = ["data:image/png;base64,AAAA"] * (dialogue_module.MAX_IMAGES_PER_MESSAGE + 1)
+    try:
+        await dialogue_module.prepare_vision_image_inputs(too_many)
+        raise AssertionError("超出图片数量应被拒绝")
+    except dialogue_module.ImageLimitError:
+        pass
+
+    old_limit = dialogue_module.MAX_IMAGE_BYTES
+    try:
+        dialogue_module.MAX_IMAGE_BYTES = 2
+        assert dialogue_module._data_uri_payload_too_large("data:image/png;base64,AAAA")
+    finally:
+        dialogue_module.MAX_IMAGE_BYTES = old_limit
+
+    assert dialogue_module.IMAGE_TOO_LARGE_MESSAGE == "图有点大，发张压缩版或描述一下"
+
+    print("      通过")
+    return True
+
+
 async def test_permissions():
     """测试 owner 权限辅助函数。"""
-    print("[5/10] 测试权限辅助函数...")
+    print("[6/11] 测试权限辅助函数...")
 
     owner_ids = parse_owner_ids("123, 456；789  100")
     assert owner_ids == {"123", "456", "789", "100"}
@@ -357,7 +415,7 @@ async def test_permissions():
 
 async def test_controlled_agent():
     """测试 Stage 7/8 受控 Agent 计划、工具、草稿和确认门。"""
-    print("[6/10] 测试受控 Agent...")
+    print("[7/11] 测试受控 Agent...")
 
     context = ControlledAgentContext(
         actor_id=f"agent_user_{RUN_ID}",
@@ -437,7 +495,7 @@ async def test_controlled_agent():
 
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
-    print("[7/10] 测试风格画像...")
+    print("[8/11] 测试风格画像...")
     fake_secret = "s" + "k-" + "testsecret123456"
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
@@ -579,7 +637,7 @@ async def test_style_profile():
 
 async def test_style_distill():
     """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
-    print("[8/10] 测试 Stage 5B 离线蒸馏...")
+    print("[9/11] 测试 Stage 5B 离线蒸馏...")
     fake_secret = "s" + "k-" + "testsecret123456"
 
     root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
@@ -1085,7 +1143,7 @@ async def test_style_distill():
 
 async def test_style_teaching():
     """测试风格教学反馈存储"""
-    print("[9/10] 测试风格教学反馈...")
+    print("[10/11] 测试风格教学反馈...")
     root = Path("data") / f"test_style_teaching_{RUN_ID}"
     skill_root = root / "36_skill"
     store = TeachingReviewStore(
@@ -1240,7 +1298,7 @@ async def test_style_teaching():
 
 async def test_unified():
     """测试统一记忆管理器"""
-    print("[10/10] 测试统一记忆管理器...")
+    print("[11/11] 测试统一记忆管理器...")
     um = UnifiedMemoryManager()
     session_id = f"test_unified_{RUN_ID}"
     user_id = f"user_{RUN_ID}"
@@ -1329,6 +1387,12 @@ async def main():
     except Exception as e:
         print(f"      失败：{e}")
         results.append(("低风险工具", False))
+
+    try:
+        results.append(("对话图片辅助", await test_dialogue_image_helpers()))
+    except Exception as e:
+        print(f"      失败：{e}")
+        results.append(("对话图片辅助", False))
 
     try:
         results.append(("权限辅助", await test_permissions()))

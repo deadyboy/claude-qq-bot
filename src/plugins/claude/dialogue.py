@@ -1,10 +1,13 @@
 """QQ 机器人对话处理."""
 
 import asyncio
+import base64
+import mimetypes
 import re
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict
+import httpx
 import nonebot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import MessageEvent, GroupMessageEvent, PrivateMessageEvent
@@ -97,10 +100,25 @@ SYSTEM_PROMPT = (
 )
 
 profile_memory_ready = False
+profile_memory_lock = asyncio.Lock()
+session_locks: dict[str, asyncio.Lock] = {}
+session_locks_guard = asyncio.Lock()
 
 REMEMBER_PREFIXES = ("/remember ", "/remember:", "/remember：", "记住：", "记住:", "记住 ")
 FORGET_PREFIXES = ("/forget ", "/forget:", "/forget：", "忘记：", "忘记:", "忘记 ")
 todo_store = TodoStore()
+MAX_IMAGES_PER_MESSAGE = 5
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+IMAGE_TOO_LARGE_MESSAGE = "图有点大，发张压缩版或描述一下"
+IMAGE_DOWNLOAD_TIMEOUT = httpx.Timeout(20.0, connect=8.0, read=15.0)
+
+
+class ImageLimitError(Exception):
+    """Raised when a QQ image exceeds configured vision limits."""
+
+
+class ImageDownloadError(Exception):
+    """Raised when a QQ image cannot be fetched for vision input."""
 
 
 def get_session_id(event: MessageEvent) -> str:
@@ -114,6 +132,15 @@ def get_session_id(event: MessageEvent) -> str:
 def _segment_data(segment: Any) -> dict:
     data = getattr(segment, "data", None)
     return data if isinstance(data, dict) else {}
+
+
+def _is_animated_image_segment(segment: Any) -> bool:
+    if getattr(segment, "type", "") != "image":
+        return False
+    data = _segment_data(segment)
+    summary = str(data.get("summary") or "").strip()
+    sub_type = str(data.get("sub_type") or "")
+    return "动画表情" in summary or sub_type == "1"
 
 
 def _segment_to_text(segment: Any) -> str:
@@ -160,7 +187,7 @@ def extract_text_and_images(event: MessageEvent) -> tuple[str, list[str]]:
     images = []
 
     for segment in event.message:
-        if getattr(segment, "type", "") == "image":
+        if getattr(segment, "type", "") == "image" and not _is_animated_image_segment(segment):
             url = _segment_data(segment).get("url", "")
             if url:
                 images.append(url)
@@ -169,6 +196,82 @@ def extract_text_and_images(event: MessageEvent) -> tuple[str, list[str]]:
             text_parts.append(text)
 
     return " ".join(text_parts), images
+
+
+def _data_uri_payload_too_large(uri: str) -> bool:
+    if "," not in uri:
+        return True
+    payload = uri.split(",", 1)[1].strip()
+    return (len(payload) * 3 // 4) > MAX_IMAGE_BYTES
+
+
+def _mime_from_url_or_header(url: str, content_type: str | None) -> str:
+    header_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if header_type.startswith("image/"):
+        return header_type
+    guessed, _ = mimetypes.guess_type(url)
+    if guessed and guessed.startswith("image/"):
+        return guessed
+    return "image/jpeg"
+
+
+async def _download_image_as_data_uri(client: httpx.AsyncClient, url: str) -> str:
+    clean_url = str(url or "").strip()
+    if not clean_url:
+        raise ImageDownloadError("empty image url")
+    if clean_url.startswith("data:image/"):
+        if _data_uri_payload_too_large(clean_url):
+            raise ImageLimitError("image data uri exceeds limit")
+        return clean_url
+
+    data = bytearray()
+    try:
+        async with client.stream("GET", clean_url) as response:
+            response.raise_for_status()
+            length_header = response.headers.get("content-length")
+            if length_header:
+                try:
+                    if int(length_header) > MAX_IMAGE_BYTES:
+                        raise ImageLimitError("image content-length exceeds limit")
+                except ValueError:
+                    pass
+
+            async for chunk in response.aiter_bytes():
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) > MAX_IMAGE_BYTES:
+                    raise ImageLimitError("image body exceeds limit")
+
+            if not data:
+                raise ImageDownloadError("empty image body")
+            mime = _mime_from_url_or_header(clean_url, response.headers.get("content-type"))
+            encoded = base64.b64encode(bytes(data)).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+    except ImageLimitError:
+        raise
+    except Exception as e:
+        raise ImageDownloadError(str(e)) from e
+    finally:
+        data.clear()
+
+
+async def prepare_vision_image_inputs(image_urls: list[str]) -> list[str]:
+    """Download QQ image URLs into in-memory data URIs for multimodal APIs."""
+    clean_urls = [str(url or "").strip() for url in image_urls if str(url or "").strip()]
+    if len(clean_urls) > MAX_IMAGES_PER_MESSAGE:
+        raise ImageLimitError("too many images")
+
+    data_uris: list[str] = []
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        trust_env=False,
+        timeout=IMAGE_DOWNLOAD_TIMEOUT,
+        headers={"User-Agent": "claude-qq-bot/vision-fetch"},
+    ) as client:
+        for url in clean_urls:
+            data_uris.append(await _download_image_as_data_uri(client, url))
+    return data_uris
 
 
 def get_plain_text(event: MessageEvent) -> str:
@@ -568,9 +671,22 @@ async def require_owner(
 async def ensure_profile_memory_ready():
     """懒加载用户画像存储，避免简单聊天启动时多余初始化。"""
     global profile_memory_ready
-    if not profile_memory_ready:
+    if profile_memory_ready:
+        return
+    async with profile_memory_lock:
+        if profile_memory_ready:
+            return
         await profile_memory.initialize()
         profile_memory_ready = True
+
+
+async def get_session_lock(session_id: str) -> asyncio.Lock:
+    async with session_locks_guard:
+        lock = session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            session_locks[session_id] = lock
+        return lock
 
 
 def _strip_command_prefix(text: str, prefixes: tuple[str, ...]) -> str:
@@ -1327,68 +1443,84 @@ async def handle_simple_chat(
     # 获取会话 ID 和历史
     session_id = get_session_id(event)
     user_id = str(event.user_id)
+    session_lock = await get_session_lock(session_id)
 
-    history = await chat_session_manager.get_messages(session_id)
-    await ensure_profile_memory_ready()
-    profile = await profile_memory.get_user_profile(user_id)
-    session_kind = "group" if isinstance(event, GroupMessageEvent) else "private"
-    system_prompt = render_system_prompt(
-        base_prompt=SYSTEM_PROMPT,
-        user_profile=profile_context_for_prompt(profile),
-        session_kind=session_kind,
-    )
+    async with session_lock:
+        history = await chat_session_manager.get_messages(session_id)
+        await ensure_profile_memory_ready()
+        profile = await profile_memory.get_user_profile(user_id)
+        session_kind = "group" if isinstance(event, GroupMessageEvent) else "private"
+        system_prompt = render_system_prompt(
+            base_prompt=SYSTEM_PROMPT,
+            user_profile=profile_context_for_prompt(profile),
+            session_kind=session_kind,
+        )
 
-    # 添加用户消息
-    user_content = text or "[图片]"
-    await chat_session_manager.add_message(session_id, "user", user_content)
+        # 添加用户消息
+        user_content = text or "[图片]"
+        await chat_session_manager.add_message(session_id, "user", user_content)
 
-    # 构建 API 请求
-    messages = history + [{"role": "user", "content": text or "请描述这张图片"}]
+        # 构建 API 请求
+        messages = history + [{"role": "user", "content": text or "请描述这张图片"}]
 
-    try:
-        if images:
-            try:
-                response = await llm_client.chat_with_images(
-                    messages=messages,
-                    image_urls=images,
-                    system_prompt=system_prompt,
-                    model=model_config.get_current_vision_model(),
-                    base_url=model_config.get_current_vision_api_base(),
-                    api_key=model_config.get_current_vision_api_key(),
-                )
-            except Exception as vision_error:
-                write_runtime_error("handle_simple_chat.vision", vision_error)
-                logger.exception(
-                    "图片模型调用失败，回退到文字模型：%s: %s",
-                    type(vision_error).__name__,
-                    vision_error,
-                )
-                fallback_text = (
-                    f"{text}\n\n" if text else ""
-                ) + "用户发了图片，但当前图片模型暂时读取失败。请简短自然地说明这边暂时看不了图，让对方补充文字描述。"
-                fallback_messages = history + [{"role": "user", "content": fallback_text}]
-                response = await llm_client.chat(
-                    messages=fallback_messages,
-                    system_prompt=system_prompt,
-                )
-        else:
-            response = await llm_client.chat(messages=messages, system_prompt=system_prompt)
-        response = format_reply(response)
-        parts = split_qq_msg(response)
+        try:
+            if images:
+                image_data_urls: list[str] = []
+                try:
+                    try:
+                        image_data_urls = await prepare_vision_image_inputs(images)
+                    except ImageLimitError:
+                        await send_qq_text(bot, event, IMAGE_TOO_LARGE_MESSAGE)
+                        await chat_session_manager.add_message(
+                            session_id,
+                            "assistant",
+                            IMAGE_TOO_LARGE_MESSAGE,
+                        )
+                        return
 
-        for part in parts:
-            await send_qq_text(bot, event, part)
+                    response = await llm_client.chat_with_images(
+                        messages=messages,
+                        image_urls=image_data_urls,
+                        system_prompt=system_prompt,
+                        model=model_config.get_current_vision_model(),
+                        base_url=model_config.get_current_vision_api_base(),
+                        api_key=model_config.get_current_vision_api_key(),
+                    )
+                except Exception as vision_error:
+                    write_runtime_error("handle_simple_chat.vision", vision_error)
+                    logger.exception(
+                        "图片模型调用失败，回退到文字模型：%s: %s",
+                        type(vision_error).__name__,
+                        vision_error,
+                    )
+                    fallback_text = (
+                        f"{text}\n\n" if text else ""
+                    ) + "用户发了图片，但当前图片模型暂时读取失败。请简短自然地说明这边暂时看不了图，让对方补充文字描述。"
+                    fallback_messages = history + [{"role": "user", "content": fallback_text}]
+                    response = await llm_client.chat(
+                        messages=fallback_messages,
+                        system_prompt=system_prompt,
+                    )
+                finally:
+                    image_data_urls.clear()
+            else:
+                response = await llm_client.chat(messages=messages, system_prompt=system_prompt)
+            response = format_reply(response)
+            parts = split_qq_msg(response)
 
-        # 添加 AI 回复
-        await chat_session_manager.add_message(session_id, "assistant", response)
-        if text and not images and not isinstance(event, GroupMessageEvent):
-            asyncio.create_task(auto_remember_user_facts(user_id, session_id, text))
+            for part in parts:
+                await send_qq_text(bot, event, part)
 
-    except Exception as e:
-        write_runtime_error("handle_simple_chat", e)
-        error_msg = f"API 调用失败：{type(e).__name__}"
-        logger.exception(f"错误：{error_msg}: {e}")
-        await bot.send(event, error_msg)
+            # 添加 AI 回复
+            await chat_session_manager.add_message(session_id, "assistant", response)
+            if text and not images and not isinstance(event, GroupMessageEvent):
+                asyncio.create_task(auto_remember_user_facts(user_id, session_id, text))
+
+        except Exception as e:
+            write_runtime_error("handle_simple_chat", e)
+            error_msg = f"API 调用失败：{type(e).__name__}"
+            logger.exception(f"错误：{error_msg}: {e}")
+            await bot.send(event, error_msg)
 
 
 # ========== 命令处理器 ==========
