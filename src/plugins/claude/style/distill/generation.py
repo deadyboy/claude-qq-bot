@@ -101,6 +101,27 @@ def _candidate_ai_marker_hits(text: str) -> int:
     return hits
 
 
+def _candidate_has_ai_assistant_flavor(text: str) -> bool:
+    raw = str(text or "")
+    compact = _compact_reply_text(raw)
+    lowered = raw.lower()
+    hard_markers = (
+        "作为AI",
+        "作为人工智能",
+        "我是AI",
+        "我是人工智能",
+        "AI助手",
+        "语言模型",
+        "很高兴为您",
+        "希望对你有帮助",
+        "以下是",
+        "建议您",
+    )
+    if any(marker.lower() in lowered or marker in compact for marker in hard_markers):
+        return True
+    return bool(re.search(r"(?:作为|我是).{0,4}(?:助手|机器人)", compact))
+
+
 def build_retrieval_first_prompt(
     latest_message: str,
     *,
@@ -485,9 +506,14 @@ def style_rerank_candidates(
             reasons.append("structured_answer")
             hard_reject_reasons.append("structured_answer")
         ai_marker_hits = _candidate_ai_marker_hits(text)
-        if is_ai_assistant_generated_text(text) or ai_marker_hits >= RERANK_AI_MARKER_MIN_HITS:
+        if (
+            is_ai_assistant_generated_text(text)
+            or ai_marker_hits >= RERANK_AI_MARKER_MIN_HITS
+            or _candidate_has_ai_assistant_flavor(text)
+        ):
             hygiene_penalty += RERANK_AI_LIKE_PENALTY
             reasons.append("ai_assistant_flavor")
+            hard_reject_reasons.append("ai_assistant_flavor")
         phrase_hits = [
             phrase for phrase in profile_phrases
             if phrase and (phrase in compact_candidate or compact_candidate in phrase)
@@ -526,6 +552,10 @@ def style_rerank_candidates(
             risk_reasons.append("credential_share_risk")
             hard_reject_reasons.append("credential_share_risk")
         behavior = classify_reply_behavior(text, latest_message=latest_message)
+        if not behavior.get("safe_for_context"):
+            hard_reject_reasons.extend(
+                str(reason) for reason in (behavior.get("reasons") or ["behavior_unsafe"])
+            )
         behavior_delta, behavior_reason = _historical_behavior_delta(
             str(behavior.get("label") or "neutral"),
             behavior_distribution,
@@ -556,6 +586,8 @@ def style_rerank_candidates(
         if correction_delta:
             style_score += correction_delta
             reasons.extend(correction_reasons)
+        if "matches_rejected_candidate" in correction_reasons:
+            hard_reject_reasons.append("matches_rejected_candidate")
         score = int(round(
             style_score * RERANK_SCORE_STYLE_WEIGHT
             + scene_score * RERANK_SCORE_SCENE_WEIGHT
@@ -628,7 +660,7 @@ async def generate_retrieval_first_reply_candidates(
         candidate_count=GEN_DEFAULT_CANDIDATE_COUNT,
         include_raw_samples=include_raw_samples,
     )
-    from .api import llm_client
+    from ...api import llm_client
     raw = await llm_client.chat(
         messages=[{"role": "user", "content": prompt}],
         system_prompt=f"你只输出 JSON 数组字符串，数组里 {GEN_DEFAULT_CANDIDATE_COUNT} 个中文聊天候选回复。",

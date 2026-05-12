@@ -1,9 +1,10 @@
 """QQ 机器人对话处理."""
 
 import asyncio
+import re
 import traceback
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 import nonebot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import MessageEvent, GroupMessageEvent, PrivateMessageEvent
@@ -97,15 +98,15 @@ SYSTEM_PROMPT = (
 
 profile_memory_ready = False
 
-REMEMBER_PREFIXES = ("/remember ", "记住：", "记住:", "记住 ")
-FORGET_PREFIXES = ("/forget ", "忘记：", "忘记:", "忘记 ")
+REMEMBER_PREFIXES = ("/remember ", "/remember:", "/remember：", "记住：", "记住:", "记住 ")
+FORGET_PREFIXES = ("/forget ", "/forget:", "/forget：", "忘记：", "忘记:", "忘记 ")
 todo_store = TodoStore()
 
 
 def get_session_id(event: MessageEvent) -> str:
     """生成会话 ID"""
     if isinstance(event, GroupMessageEvent):
-        return f"group_{event.group_id}"
+        return f"group_{event.group_id}_user_{event.user_id}"
     else:
         return f"private_{event.user_id}"
 
@@ -354,11 +355,14 @@ def is_todo_command(event: MessageEvent) -> bool:
     return (
         lowered == "/todo"
         or lowered.startswith("/todo ")
+        or text == "/待办"
+        or text.startswith("/待办 ")
+        or text.startswith("/待办：")
+        or text.startswith("/待办:")
         or text == "待办"
         or text.startswith("待办 ")
         or text.startswith("待办：")
         or text.startswith("待办:")
-        or text.startswith("/待办")
     )
 
 
@@ -451,11 +455,13 @@ def is_remember_command(event: MessageEvent) -> bool:
     text = get_plain_text(event)
     lowered = text.lower()
     return (
-        lowered.startswith("/remember ")
+        lowered == "/remember"
+        or lowered.startswith("/remember ")
+        or lowered.startswith("/remember:")
+        or lowered.startswith("/remember：")
         or text.startswith("记住：")
         or text.startswith("记住:")
         or text.startswith("记住 ")
-        or (text.startswith("记住") and len(text) > 2)
     )
 
 
@@ -463,7 +469,10 @@ def is_forget_command(event: MessageEvent) -> bool:
     text = get_plain_text(event)
     lowered = text.lower()
     return (
-        lowered.startswith("/forget")
+        lowered == "/forget"
+        or lowered.startswith("/forget ")
+        or lowered.startswith("/forget:")
+        or lowered.startswith("/forget：")
         or text.startswith("忘记：")
         or text.startswith("忘记:")
         or text.startswith("忘记 ")
@@ -508,6 +517,39 @@ def should_handle_targeted_event(
 
     is_reply = event.reply and str(event.reply.user_id) == str(bot.self_id)
     return is_to_bot(event, bot) or is_reply
+
+
+def is_self_event(event: MessageEvent, bot: nonebot.adapters.onebot.v11.Bot) -> bool:
+    """Compare QQ ids as strings because adapters may expose different scalar types."""
+    return str(getattr(event, "user_id", "")) == str(bot.self_id)
+
+
+def targeted_command_rule(command_rule: Callable[[MessageEvent], bool]):
+    """Only let command matchers run for private messages or targeted group messages."""
+    def _rule(bot: nonebot.adapters.onebot.v11.Bot, event: MessageEvent) -> bool:
+        return (
+            not is_self_event(event, bot)
+            and should_handle_targeted_event(event, bot)
+            and command_rule(event)
+        )
+
+    return _rule
+
+
+def clean_group_target_text(
+    text: str,
+    event: MessageEvent,
+    bot: nonebot.adapters.onebot.v11.Bot,
+) -> str:
+    """Remove textual bot mentions without relying on adapter-specific nicknames."""
+    cleaned = str(text or "")
+    if not isinstance(event, GroupMessageEvent):
+        return cleaned.strip()
+
+    self_id = re.escape(str(bot.self_id))
+    cleaned = re.sub(rf"\[CQ:at,qq={self_id}\]", "", cleaned)
+    cleaned = re.sub(rf"@{self_id}\b", "", cleaned)
+    return cleaned.strip()
 
 
 async def require_owner(
@@ -890,13 +932,30 @@ def create_confirmation(
     payload: dict,
 ) -> str:
     """Create a pending action and return a user-facing confirmation prompt."""
+    chat_scope = get_confirmation_scope(event)
     action = confirmation_store.create(
         action_type=action_type,
         created_by=event.user_id,
         summary=summary,
         payload=payload,
+        chat_scope=chat_scope,
     )
     return format_confirmation_request(action)
+
+
+def get_confirmation_scope(event: MessageEvent) -> dict:
+    """Return the chat scope that must consume a pending confirmation."""
+    if isinstance(event, GroupMessageEvent):
+        return {
+            "chat_type": "group",
+            "target_id": str(event.group_id),
+            "session_id": get_session_id(event),
+        }
+    return {
+        "chat_type": "private",
+        "target_id": str(event.user_id),
+        "session_id": get_session_id(event),
+    }
 
 
 async def execute_pending_action(action: dict) -> str:
@@ -1004,6 +1063,8 @@ async def execute_pending_action(action: dict) -> str:
             confirmed=True,
             session_clearer=chat_session_manager.clear_session,
         )
+        if not all(result.ok for result in results):
+            return format_plan_execution_results(draft_id, results)
         agent_draft_store.update_status(
             draft_id,
             actor_id,
@@ -1192,7 +1253,7 @@ async def handle_simple_chat(
     logger = logging.getLogger('claude_bot')
 
     # 过滤机器人自己发的消息
-    if event.user_id == bot.self_id:
+    if is_self_event(event, bot):
         return
 
     # 群聊需要 @机器人 或回复
@@ -1203,7 +1264,7 @@ async def handle_simple_chat(
 
     # 过滤 @ 和回复标记
     if isinstance(event, GroupMessageEvent):
-        text = text.replace(f"@{bot.nickname}", "").strip()
+        text = clean_group_target_text(text, event, bot)
         if not text and not images:
             text = "在不在"
 

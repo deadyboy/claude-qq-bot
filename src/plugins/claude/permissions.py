@@ -3,6 +3,8 @@
 import json
 import os
 import re
+import threading
+import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +21,8 @@ DEFAULT_ACCESS_POLICY: Dict[str, Any] = {
     "trusted_groups": {},
     "updated_at": None,
 }
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
 
 _project_root = Path(__file__).resolve().parents[3]
 _env_path = _project_root / ".env"
@@ -61,6 +65,31 @@ def is_owner_event(event) -> bool:
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _path_lock(path: Path) -> threading.RLock:
+    key = path.resolve()
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _normalize_id(value: str | int) -> str:
@@ -109,21 +138,21 @@ class AccessPolicyStore:
         self.path = Path(path)
 
     def load(self) -> Dict[str, Any]:
-        if not self.path.exists():
-            return deepcopy(DEFAULT_ACCESS_POLICY)
-        try:
-            with self.path.open("r", encoding="utf-8") as f:
-                return normalize_access_policy(json.load(f))
-        except (OSError, json.JSONDecodeError):
-            return deepcopy(DEFAULT_ACCESS_POLICY)
+        with _path_lock(self.path):
+            if not self.path.exists():
+                return deepcopy(DEFAULT_ACCESS_POLICY)
+            try:
+                with self.path.open("r", encoding="utf-8") as f:
+                    return normalize_access_policy(json.load(f))
+            except (OSError, json.JSONDecodeError):
+                return deepcopy(DEFAULT_ACCESS_POLICY)
 
     def save(self, policy: Dict[str, Any]) -> Dict[str, Any]:
-        normalized = normalize_access_policy(policy)
-        normalized["updated_at"] = _now_iso()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as f:
-            json.dump(normalized, f, ensure_ascii=False, indent=2)
-        return normalized
+        with _path_lock(self.path):
+            normalized = normalize_access_policy(policy)
+            normalized["updated_at"] = _now_iso()
+            _atomic_write_json(self.path, normalized)
+            return normalized
 
     def is_trusted_user(self, user_id: str | int) -> bool:
         return _normalize_id(user_id) in self.load().get("trusted_private_users", {})
@@ -135,20 +164,22 @@ class AccessPolicyStore:
         target_id = _normalize_id(user_id)
         if not _looks_like_qq_id(target_id):
             return False, "用户 QQ 号格式不正确。"
-        policy = self.load()
-        policy.setdefault("trusted_private_users", {})[target_id] = {
-            "note": note.strip()[:80],
-            "added_at": _now_iso(),
-            "added_by": _normalize_id(added_by)[:24],
-        }
-        self.save(policy)
+        with _path_lock(self.path):
+            policy = self.load()
+            policy.setdefault("trusted_private_users", {})[target_id] = {
+                "note": note.strip()[:80],
+                "added_at": _now_iso(),
+                "added_by": _normalize_id(added_by)[:24],
+            }
+            self.save(policy)
         return True, f"已加入信任用户：{target_id}"
 
     def remove_user(self, user_id: str | int) -> tuple[bool, str]:
         target_id = _normalize_id(user_id)
-        policy = self.load()
-        removed = policy.get("trusted_private_users", {}).pop(target_id, None)
-        self.save(policy)
+        with _path_lock(self.path):
+            policy = self.load()
+            removed = policy.get("trusted_private_users", {}).pop(target_id, None)
+            self.save(policy)
         if removed is None:
             return False, "信任用户名单中没有这个 QQ。"
         return True, f"已移除信任用户：{target_id}"
@@ -157,20 +188,22 @@ class AccessPolicyStore:
         target_id = _normalize_id(group_id)
         if not _looks_like_qq_id(target_id):
             return False, "群号格式不正确。"
-        policy = self.load()
-        policy.setdefault("trusted_groups", {})[target_id] = {
-            "note": note.strip()[:80],
-            "added_at": _now_iso(),
-            "added_by": _normalize_id(added_by)[:24],
-        }
-        self.save(policy)
+        with _path_lock(self.path):
+            policy = self.load()
+            policy.setdefault("trusted_groups", {})[target_id] = {
+                "note": note.strip()[:80],
+                "added_at": _now_iso(),
+                "added_by": _normalize_id(added_by)[:24],
+            }
+            self.save(policy)
         return True, f"已加入信任群：{target_id}"
 
     def remove_group(self, group_id: str | int) -> tuple[bool, str]:
         target_id = _normalize_id(group_id)
-        policy = self.load()
-        removed = policy.get("trusted_groups", {}).pop(target_id, None)
-        self.save(policy)
+        with _path_lock(self.path):
+            policy = self.load()
+            removed = policy.get("trusted_groups", {}).pop(target_id, None)
+            self.save(policy)
         if removed is None:
             return False, "信任群名单中没有这个群。"
         return True, f"已移除信任群：{target_id}"

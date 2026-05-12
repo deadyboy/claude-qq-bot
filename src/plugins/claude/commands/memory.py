@@ -3,7 +3,7 @@
 from ..dialogue import *
 
 
-memory_toggle_cmd = on_message(rule=is_memory_toggle_command, priority=4, block=True)
+memory_toggle_cmd = on_message(rule=targeted_command_rule(is_memory_toggle_command), priority=4, block=True)
 
 
 @memory_toggle_cmd.handle()
@@ -37,7 +37,7 @@ async def handle_memory_toggle(
     await send_qq_text(bot, event, "用法：记忆开关 开 / 记忆开关 关")
 
 
-time_cmd = on_message(rule=is_time_command, priority=4, block=True)
+time_cmd = on_message(rule=targeted_command_rule(is_time_command), priority=4, block=True)
 
 
 @time_cmd.handle()
@@ -53,7 +53,7 @@ async def handle_time(
     await send_qq_text(bot, event, format_current_time())
 
 
-calc_cmd = on_message(rule=is_calc_command, priority=4, block=True)
+calc_cmd = on_message(rule=targeted_command_rule(is_calc_command), priority=4, block=True)
 
 
 @calc_cmd.handle()
@@ -69,7 +69,7 @@ async def handle_calc(
     await send_qq_text(bot, event, safe_calculate(parse_calc_payload(get_plain_text(event))))
 
 
-todo_cmd = on_message(rule=is_todo_command, priority=4, block=True)
+todo_cmd = on_message(rule=targeted_command_rule(is_todo_command), priority=4, block=True)
 
 
 @todo_cmd.handle()
@@ -105,7 +105,7 @@ async def handle_todo(
         await send_qq_text(bot, event, f"待办操作失败：{e}")
 
 
-memory_query_cmd = on_message(rule=is_memory_query_command, priority=4, block=True)
+memory_query_cmd = on_message(rule=targeted_command_rule(is_memory_query_command), priority=4, block=True)
 
 
 @memory_query_cmd.handle()
@@ -130,7 +130,7 @@ async def handle_memory_query(
 
 # ========== 轻量记忆与身份命令 ==========
 
-remember_cmd = on_message(rule=is_remember_command, priority=4, block=True)
+remember_cmd = on_message(rule=targeted_command_rule(is_remember_command), priority=4, block=True)
 
 
 @remember_cmd.handle()
@@ -163,7 +163,7 @@ async def handle_remember(
     await send_qq_text(bot, event, f"记住了：{predicate} = {value}")
 
 
-forget_cmd = on_message(rule=is_forget_command, priority=4, block=True)
+forget_cmd = on_message(rule=targeted_command_rule(is_forget_command), priority=4, block=True)
 
 
 @forget_cmd.handle()
@@ -189,7 +189,7 @@ async def handle_forget(
         await send_qq_text(bot, event, "没有找到匹配的资料。")
 
 
-profile_cmd = on_message(rule=is_profile_command, priority=4, block=True)
+profile_cmd = on_message(rule=targeted_command_rule(is_profile_command), priority=4, block=True)
 
 
 @profile_cmd.handle()

@@ -8,7 +8,9 @@ autonomous loop or execute hidden tools.
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 import time
 import uuid
 from copy import deepcopy
@@ -29,6 +31,34 @@ from .safe_tools import (
 
 AGENT_DRAFTS_PATH = Path("data/agent_drafts.json")
 MAX_DRAFTS = 80
+APPROVED_DRAFT_STATUSES = {"accepted", "approved"}
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path: Path) -> threading.RLock:
+    key = path.resolve()
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 @dataclass(frozen=True)
@@ -344,8 +374,8 @@ def format_agent_plan(plan: Dict[str, Any]) -> str:
         lines.append(
             f"{index}. {step.get('tool_name')}({payload})；风险={step.get('risk')}；{confirm}；{step.get('reason')}"
         )
-    lines.append(f"执行：/agent 执行计划 {plan.get('id')}")
     lines.append(f"标记：/agent 采纳 {plan.get('id')}；/agent 拒绝 {plan.get('id')}")
+    lines.append(f"执行：采纳后 /agent 执行计划 {plan.get('id')}")
     return "\n".join(lines)
 
 
@@ -373,29 +403,30 @@ class ControlledAgentDraftStore:
         self.path = Path(path)
 
     def _load(self) -> list[Dict[str, Any]]:
-        if not self.path.exists():
-            return []
-        try:
-            with self.path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return []
-        return data if isinstance(data, list) else []
+        with _path_lock(self.path):
+            if not self.path.exists():
+                return []
+            try:
+                with self.path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                return []
+            return data if isinstance(data, list) else []
 
     def _save(self, drafts: list[Dict[str, Any]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as f:
-            json.dump(drafts[-MAX_DRAFTS:], f, ensure_ascii=False, indent=2)
+        with _path_lock(self.path):
+            _atomic_write_json(self.path, drafts[-MAX_DRAFTS:])
 
     def create(self, actor_id: str | int, plan: Dict[str, Any]) -> Dict[str, Any]:
-        drafts = self._load()
-        draft = deepcopy(plan)
-        draft["id"] = uuid.uuid4().hex[:8]
-        draft["actor_id"] = str(actor_id)
-        draft["created_at_ts"] = time.time()
-        draft["updated_at"] = _now_iso()
-        drafts.append(draft)
-        self._save(drafts)
+        with _path_lock(self.path):
+            drafts = self._load()
+            draft = deepcopy(plan)
+            draft["id"] = uuid.uuid4().hex[:8]
+            draft["actor_id"] = str(actor_id)
+            draft["created_at_ts"] = time.time()
+            draft["updated_at"] = _now_iso()
+            drafts.append(draft)
+            self._save(drafts)
         return deepcopy(draft)
 
     def get(self, draft_id: str, actor_id: str | int | None = None) -> Dict[str, Any] | None:
@@ -416,19 +447,20 @@ class ControlledAgentDraftStore:
         return [deepcopy(draft) for draft in drafts[:limit]]
 
     def update_status(self, draft_id: str, actor_id: str | int, status: str, result: str = "") -> Dict[str, Any] | None:
-        drafts = self._load()
-        actor = str(actor_id)
-        updated = None
-        for draft in drafts:
-            if str(draft.get("id")) == str(draft_id) and str(draft.get("actor_id")) == actor:
-                draft["status"] = status
-                draft["review_result"] = result[:400]
-                draft["updated_at"] = _now_iso()
-                updated = deepcopy(draft)
-                break
-        if updated:
-            self._save(drafts)
-        return updated
+        with _path_lock(self.path):
+            drafts = self._load()
+            actor = str(actor_id)
+            updated = None
+            for draft in drafts:
+                if str(draft.get("id")) == str(draft_id) and str(draft.get("actor_id")) == actor:
+                    draft["status"] = status
+                    draft["review_result"] = result[:400]
+                    draft["updated_at"] = _now_iso()
+                    updated = deepcopy(draft)
+                    break
+            if updated:
+                self._save(drafts)
+            return updated
 
     def clear_for_tests(self) -> None:
         if self.path.exists():
@@ -527,6 +559,16 @@ async def execute_agent_plan(
     session_clearer: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[list[ToolExecutionResult], bool]:
     results: list[ToolExecutionResult] = []
+    if plan.get("id") and str(plan.get("status") or "") not in APPROVED_DRAFT_STATUSES:
+        return [
+            ToolExecutionResult(
+                False,
+                "controlled_agent_plan",
+                "not_approved",
+                "受控 Agent 草稿必须先 /agent 采纳 后才能执行；已拒绝或未审核草稿不会执行。",
+            )
+        ], False
+
     if not confirmed:
         for step in plan.get("steps") or []:
             spec = get_controlled_tool(str(step.get("tool_name") or ""))

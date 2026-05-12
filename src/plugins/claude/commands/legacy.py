@@ -3,7 +3,7 @@
 from ..dialogue import *
 
 
-delegate_cmd = on_message(rule=is_delegate_command, priority=4, block=True)
+delegate_cmd = on_message(rule=targeted_command_rule(is_delegate_command), priority=4, block=True)
 
 
 @delegate_cmd.handle()

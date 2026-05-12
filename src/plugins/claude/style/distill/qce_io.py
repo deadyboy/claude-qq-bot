@@ -1,7 +1,9 @@
 """Offline QCE chat-log distillation for owner style profiles.
 
-This module reads QCE JSON exports and writes only aggregate style summaries
-plus message-id based sample indexes. It must not persist raw chat text.
+This module reads QCE JSON exports and writes aggregate summaries plus local
+raw-text artifacts used by retrieval/few-shot evaluation. User-facing reports
+must not display raw chat text, and these artifacts must remain under ignored
+local data directories.
 """
 
 from __future__ import annotations
@@ -634,10 +636,18 @@ def run_qce_style_distillation(
         "input_dir_id": _sha1_short(str(resolved_input), 12),
         "self_uin_hash": _sha1_short(self_uin_hash_source, 12) if self_uin_hash_source else "",
         "raw_text_policy": (
-            "Summary and sample_index store metadata only. turns.jsonl, dialogue_pairs.jsonl, "
+            "Public reports show metadata only. Summary and sample_index store metadata only. turns.jsonl, dialogue_pairs.jsonl, "
             "phrase_profile.json, rag_pool.jsonl, sft_candidates.jsonl, and rerank_style_rules.json "
-            "are local raw-text training artifacts and must not be committed or exposed."
+            "are local raw-text training artifacts for retrieval/evaluation and must not be committed or exposed."
         ),
+        "local_raw_artifacts": [
+            "turns.jsonl",
+            "dialogue_pairs.jsonl",
+            "phrase_profile.json",
+            "rag_pool.jsonl",
+            "sft_candidates.jsonl",
+            "rerank_style_rules.json",
+        ],
         "sample_index": "sample_index.jsonl",
         "turns": "turns.jsonl",
         "dialogue_pairs": "dialogue_pairs.jsonl",

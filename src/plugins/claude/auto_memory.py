@@ -17,6 +17,8 @@ MIN_AUTO_MEMORY_CONFIDENCE = 0.68
 SENSITIVE_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
     re.compile(r"(?i)\b(api[-_ ]?key|access[-_ ]?token|secret|private[-_ ]?key)\b"),
+    re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
+    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
     re.compile(r"(密码|口令|密钥|令牌|验证码|身份证|银行卡|私钥|助记词)"),
 )
 

@@ -3,13 +3,34 @@
 
 import sys
 import asyncio
+import atexit
 import json
 import os
+import tempfile
 import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent))
+PROJECT_ROOT = Path(__file__).parent.resolve()
+sys.path.insert(0, str(PROJECT_ROOT))
+_ORIGINAL_CWD = Path.cwd()
+_TEST_WORKDIR = tempfile.TemporaryDirectory(
+    prefix="claude_qq_bot_test_quick_",
+    ignore_cleanup_errors=True,
+)
+
+
+def _cleanup_test_workdir() -> None:
+    os.chdir(_ORIGINAL_CWD)
+    try:
+        _TEST_WORKDIR.cleanup()
+    except PermissionError:
+        # Chroma can briefly keep sqlite files open on Windows after tests pass.
+        pass
+
+
+atexit.register(_cleanup_test_workdir)
+os.chdir(_TEST_WORKDIR.name)
 
 from src.plugins.claude.memory_core import (
     ShortTermMemoryManager,
@@ -156,6 +177,15 @@ async def test_key_facts():
     # 查询事实
     facts = await kfm.get_facts(fact_type="user_profile", subject=subject)
     print(f"      查询到{len(facts)}条事实")
+    await kfm.verify_fact(fact_id)
+    await kfm.add_fact(
+        predicate="occupation",
+        object="程序员",
+        fact_type="user_profile",
+        subject=subject,
+    )
+    facts_after_readd = await kfm.get_facts(fact_type="user_profile", subject=subject)
+    assert any(item["id"] == fact_id and item["verified"] for item in facts_after_readd), "重复自动写入不应降级已验证事实"
 
     # 查询任务
     tasks = [
@@ -174,12 +204,16 @@ async def test_key_facts():
 async def test_auto_memory_helpers():
     """测试自动记忆抽取的本地规则与过滤。"""
     print("[3/10] 测试自动记忆规则...")
-    fake_secret = "sk-" + "testsecret123456"
+    fake_secret = "s" + "k-" + "testsecret123456"
 
     assert should_attempt_auto_memory("我叫付健，我喜欢简洁直接的回答")
     assert not should_attempt_auto_memory("今天天气怎么样？")
     assert contains_sensitive_content(f"我的 API key 是 {fake_secret}")
+    assert contains_sensitive_content("我常用手机号 13800138000")
+    assert contains_sensitive_content("我的邮箱是 user@example.com")
     assert not should_attempt_auto_memory(f"我的 API key 是 {fake_secret}")
+    assert not should_attempt_auto_memory("我常用手机号 13800138000")
+    assert not should_attempt_auto_memory("我的邮箱是 user@example.com")
 
     facts = heuristic_extract_facts("我叫付健，我喜欢简洁直接的回答")
     print(f"      规则抽取：{facts}")
@@ -349,6 +383,12 @@ async def test_controlled_agent():
         draft = drafts.create(context.actor_id, plan)
         assert draft["id"] in format_agent_plan(draft)
         assert draft["id"] in format_recent_agent_drafts(drafts.list_recent(context.actor_id))
+        blocked_results, blocked_needs_confirmation = await execute_agent_plan(draft, context, todo_store=todo)
+        assert blocked_needs_confirmation is False
+        assert blocked_results[0].status == "not_approved"
+        rejected = drafts.update_status(draft["id"], context.actor_id, "rejected")
+        rejected_results, _ = await execute_agent_plan(rejected, context, todo_store=todo)
+        assert rejected_results[0].status == "not_approved"
 
         result = await execute_controlled_tool(
             "calc",
@@ -398,7 +438,7 @@ async def test_controlled_agent():
 async def test_style_profile():
     """测试风格画像本地存储和解析。"""
     print("[7/10] 测试风格画像...")
-    fake_secret = "sk-" + "testsecret123456"
+    fake_secret = "s" + "k-" + "testsecret123456"
 
     store = StyleProfileStore(Path("data") / f"style_profiles_test_{RUN_ID}")
     try:
@@ -540,7 +580,7 @@ async def test_style_profile():
 async def test_style_distill():
     """测试 Stage 5B 离线蒸馏不保存聊天正文。"""
     print("[8/10] 测试 Stage 5B 离线蒸馏...")
-    fake_secret = "sk-" + "testsecret123456"
+    fake_secret = "s" + "k-" + "testsecret123456"
 
     root = Path("data") / f"qce_style_distill_test_{RUN_ID}"
     input_dir = root / "input"
@@ -743,7 +783,7 @@ async def test_style_distill():
         assert "dialogue_pair_count" in eval_text
         assert "scene_counts" in eval_text
         assert "taxonomy" in eval_text
-        for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "这个怎么弄", "发我看看", "api key", "sk-testsecret"):
+        for forbidden in ("样例问题A", "样例问题B", "样例回复A", "样例回复B", "这个怎么弄", "发我看看", "api key", fake_secret[:13]):
             assert forbidden not in summary_text
             assert forbidden not in index_text
             assert forbidden not in relation_text
@@ -837,7 +877,7 @@ async def test_style_distill():
         raw_text = json.dumps(raw_context, ensure_ascii=False)
         assert "样例问题A" in raw_text
         assert "样例回复A" in raw_text
-        assert "sk-testsecret" not in raw_text
+        assert fake_secret[:13] not in raw_text
         raw_prompt_context = format_generation_context_for_prompt(raw_context)
         assert "真实历史 few-shot 样本" in raw_prompt_context
         assert "样例回复A" in raw_prompt_context
@@ -864,7 +904,7 @@ async def test_style_distill():
         assert "Stage 5B-RAG 风格调试" in debug_report
         assert "这个怎么弄" in debug_report
         assert "发我看看" in debug_report
-        assert "sk-testsecret" not in debug_report
+        assert fake_secret[:13] not in debug_report
 
         pair_retrieval = retrieve_dialogue_pair_samples(
             "样例问题",
@@ -1094,7 +1134,13 @@ async def test_style_teaching():
             reason="最像",
         )
         assert ok, msg
-        assert feedback and feedback["selected_candidate"] == "咋了"
+        assert feedback and feedback["selected_candidate_ref"]["hash"]
+        feedback_text = (root / "teaching_feedback.jsonl").read_text(encoding="utf-8")
+        assert "你现在忙不忙" not in feedback_text
+        assert "咋了" not in feedback_text
+        active_text = (root / "teaching_reviews.json").read_text(encoding="utf-8")
+        assert "你现在忙不忙" not in active_text
+        assert "咋了" not in active_text
         stats = store.feedback_stats()
         assert stats["feedback_count"] == 1
         assert stats["action_counts"]["accept"] == 1

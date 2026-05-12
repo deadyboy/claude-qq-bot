@@ -5,6 +5,8 @@ echo "  QQ 机器人启动脚本"
 echo "========================================"
 echo
 
+cd "$(dirname "$0")"
+
 # 检查虚拟环境
 if [ ! -d "venv" ]; then
     echo "[!] 虚拟环境未创建，正在安装依赖..."
@@ -17,4 +19,5 @@ else
 fi
 
 echo "[OK] 启动机器人..."
-nb run
+echo "监听反向 WebSocket: ws://127.0.0.1:8081/onebot/v11/ws"
+python -u bot.py

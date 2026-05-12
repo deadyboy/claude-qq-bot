@@ -250,6 +250,34 @@ def _source_target_id(source: Dict[str, Any]) -> str:
             return match.group(1)
     return ""
 
+def _source_matches_target(source: Dict[str, Any], target: str) -> bool:
+    target_text = str(target or "").strip()
+    if not target_text:
+        return False
+    target_digits = "".join(re.findall(r"\d+", target_text))
+    direct_values = [
+        source.get("relationship_id"),
+        source.get("target_id"),
+        source.get("uin"),
+        source.get("user_id"),
+        source.get("group_id"),
+        source.get("source_file_id"),
+    ]
+    for value in direct_values:
+        value_text = str(value or "").strip()
+        if not value_text:
+            continue
+        if value_text == target_text:
+            return True
+        value_digits = "".join(re.findall(r"\d+", value_text))
+        if target_digits and value_digits and value_digits == target_digits:
+            return True
+    guessed = _source_target_id(source)
+    if guessed == target_text:
+        return True
+    return bool(target_digits and guessed and guessed == target_digits)
+
+
 def find_source_for_target(
     target_id: str | int,
     *,
@@ -272,7 +300,7 @@ def find_source_for_target(
         source_chat_type = str(source.get("chat_type") or "")
         if expected_chat_type and source_chat_type != expected_chat_type:
             continue
-        if _source_target_id(source) != target:
+        if not _source_matches_target(source, target):
             continue
         return {
             "matched": True,

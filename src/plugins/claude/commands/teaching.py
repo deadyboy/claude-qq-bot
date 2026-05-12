@@ -4,7 +4,7 @@ from ..dialogue import *
 from ..dialogue import _is_switch_off, _is_switch_on, _resolve_review_for_feedback, _split_review_payload
 
 
-teaching_cmd = on_message(rule=is_teaching_command, priority=4, block=True)
+teaching_cmd = on_message(rule=targeted_command_rule(is_teaching_command), priority=4, block=True)
 
 
 @teaching_cmd.handle()

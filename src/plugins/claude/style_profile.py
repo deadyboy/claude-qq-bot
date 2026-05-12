@@ -1178,12 +1178,17 @@ def _parse_draft_candidates(raw: str) -> List[str]:
 
 
 def _fallback_style_draft(target: str, generation_context: Dict[str, Any] | None) -> str:
-    """System-level fallback only, used when generation/rerank yields nothing usable."""
-    for example in (generation_context or {}).get("few_shot_examples") or []:
-        text = re.sub(r"\s+", " ", str(example.get("owner_reply") or "")).strip()
-        if text and 1 <= len(text) <= 80:
-            return text
-    return ""
+    """System-level fallback only; never copies historical few-shot text."""
+    compact = re.sub(r"\s+", "", str(target or ""))
+    if any(token in compact for token in ("密码", "验证码", "转账", "借钱", "账号", "登录")):
+        return "这个我得自己确认下"
+    if any(token in compact for token in ("图片", "截图", "[图片]", "[表情]", "表情")):
+        return "我看看"
+    if any(token in compact for token in ("报错", "代码", "看看", "看下", "帮我", "弄完", "做完")):
+        return "我看下"
+    if "?" in compact or "？" in compact or "吗" in compact:
+        return "我想想"
+    return "嗯嗯"
 
 
 def _audit_style_generation(
@@ -1359,7 +1364,7 @@ async def generate_style_draft_result(
                 break
     if selected is None:
         selected = _fallback_style_draft(target, generation_context)
-        selection_reason = "fallback_from_history" if selected else "no_usable_candidate"
+        selection_reason = "system_fallback" if selected else "no_usable_candidate"
     return {
         "ok": True,
         "draft": selected,

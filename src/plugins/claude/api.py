@@ -4,14 +4,11 @@ import os
 import httpx
 from openai import AsyncOpenAI
 from typing import List, Dict, Any, Optional
-from pathlib import Path
-from dotenv import load_dotenv
 
-# 加载项目根目录的 .env 文件
-_project_root = Path(__file__).resolve().parents[3]
-_env_path = _project_root / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path, override=True)
+from .config import load_project_env, validate_api_key_value
+
+
+load_project_env()
 
 class LLMClient:
     def __init__(
@@ -23,6 +20,7 @@ class LLMClient:
         self.base_url = base_url or os.getenv("LLM_API_BASE", "https://api.llm.ustc.edu.cn/v1")
         self.api_key = api_key or os.getenv("LLM_API_KEY")
         self.model = model or os.getenv("LLM_MODEL", "deepseek-v4-pro")
+        self.api_key = validate_api_key_value(self.api_key, "LLM_API_KEY")
 
         self.client = self._build_client()
 
@@ -62,6 +60,7 @@ class LLMClient:
             self.model = model
 
         if rebuild_client:
+            self.api_key = validate_api_key_value(self.api_key, "LLM_API_KEY")
             self.client = self._build_client()
 
     def _needs_temporary_client(
@@ -91,6 +90,10 @@ class LLMClient:
         Keeping the override local avoids mutating the global text client when
         a single image message needs a dedicated multimodal model.
         """
+        effective_api_key = api_key or self.api_key
+        key_env_name = "LLM_VISION_API_KEY" if api_key and api_key != self.api_key else "LLM_API_KEY"
+        validate_api_key_value(effective_api_key, key_env_name)
+
         if not self._needs_temporary_client(base_url=base_url, api_key=api_key):
             return await self.client.chat.completions.create(
                 model=model,
@@ -101,7 +104,7 @@ class LLMClient:
 
         temp_client = AsyncOpenAI(
             base_url=base_url or self.base_url,
-            api_key=api_key or self.api_key,
+            api_key=effective_api_key,
             http_client=httpx.AsyncClient(
                 trust_env=False,
                 timeout=httpx.Timeout(60.0, connect=15.0),

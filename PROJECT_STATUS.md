@@ -5,7 +5,7 @@
 
 ## Current Architecture
 
-The bot is a NoneBot2 + NapCat/OneBot QQ bot. Runtime code is now centered on ordinary chat, command handlers, memory, permissions, confirmation, and the Stage 5B owner-style teaching loop.
+The bot is a NoneBot2 + NapCat/OneBot QQ bot. It starts with `python -u bot.py` and listens for NapCat/Lagrange reverse WebSocket connections at `ws://127.0.0.1:8081/onebot/v11/ws`. Runtime code is now centered on ordinary chat, command handlers, memory, permissions, confirmation, and the Stage 5B owner-style teaching loop.
 
 Old Agent Mode has been retired from runtime. The historical implementation is archived at `src/plugins/claude/legacy/agent.py` and should not be re-enabled directly.
 
@@ -89,3 +89,5 @@ python -m compileall -q bot.py src test_quick.py test_memory.py
 python test_quick.py
 python test_memory.py
 ```
+
+`nb run` is not the default startup path and should not be required in clean installs unless `nb-cli` is installed separately for operator preference.

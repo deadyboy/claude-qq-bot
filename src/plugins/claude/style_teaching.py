@@ -1,7 +1,10 @@
 """Owner style teaching/review feedback store."""
 
 import json
+import os
 import re
+import hashlib
+import threading
 import time
 import uuid
 from copy import deepcopy
@@ -15,6 +18,33 @@ ACTIVE_REVIEWS_PATH = STYLE_TEACHING_DIR / "teaching_reviews.json"
 FEEDBACK_LOG_PATH = STYLE_TEACHING_DIR / "teaching_feedback.jsonl"
 MAX_ACTIVE_REVIEWS = 80
 REVIEW_TTL_SECONDS = 24 * 60 * 60
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path: Path) -> threading.RLock:
+    key = path.resolve()
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _now_iso() -> str:
@@ -27,6 +57,19 @@ def _now_ts() -> float:
 
 def _clean_text(value: Any, limit: int = 1200) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+
+def _sha1_short(value: Any, length: int = 12) -> str:
+    text = _clean_text(value, 2000)
+    return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()[:length] if text else ""
+
+
+def _text_ref(value: Any) -> Dict[str, Any]:
+    text = _clean_text(value, 2000)
+    return {
+        "hash": _sha1_short(text),
+        "length": len(text),
+    }
 
 
 def _normalize_candidate(item: Any) -> str:
@@ -111,6 +154,21 @@ def _normalize_review(raw: Any) -> Dict[str, Any] | None:
     }
 
 
+def _redact_review_after_feedback(review: Dict[str, Any]) -> Dict[str, Any]:
+    redacted = deepcopy(review)
+    redacted["message"] = ""
+    redacted["message_ref"] = _text_ref(review.get("message") or "")
+    redacted["recent_dialogue"] = []
+    redacted["recent_turn_count"] = len(review.get("recent_dialogue") or [])
+    redacted["candidates"] = []
+    redacted["candidate_refs"] = [
+        _text_ref(candidate)
+        for candidate in (review.get("candidates") or [])[:8]
+        if _clean_text(candidate)
+    ]
+    return redacted
+
+
 class TeachingReviewStore:
     """JSON active-review store plus JSONL feedback log."""
 
@@ -125,12 +183,13 @@ class TeachingReviewStore:
         self.corrections_path = Path(corrections_path) if corrections_path is not None else None
 
     def _load_active(self) -> Dict[str, Dict[str, Any]]:
-        if not self.active_path.exists():
-            return {}
-        try:
-            raw = json.loads(self.active_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        with _path_lock(self.active_path):
+            if not self.active_path.exists():
+                return {}
+            try:
+                raw = json.loads(self.active_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
         if not isinstance(raw, dict):
             return {}
         reviews = {}
@@ -146,11 +205,8 @@ class TeachingReviewStore:
             key=lambda item: float(item.get("created_ts") or 0),
             reverse=True,
         )[:MAX_ACTIVE_REVIEWS]
-        self.active_path.parent.mkdir(parents=True, exist_ok=True)
-        self.active_path.write_text(
-            json.dumps({item["id"]: item for item in items}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        with _path_lock(self.active_path):
+            _atomic_write_json(self.active_path, {item["id"]: item for item in items})
 
     def create_review(
         self,
@@ -188,9 +244,10 @@ class TeachingReviewStore:
         })
         if not review:
             raise ValueError("教学样本创建失败。")
-        reviews = self._load_active()
-        reviews[review_id] = review
-        self._save_active(reviews)
+        with _path_lock(self.active_path):
+            reviews = self._load_active()
+            reviews[review_id] = review
+            self._save_active(reviews)
         return deepcopy(review)
 
     def get(self, review_id: str) -> Dict[str, Any] | None:
@@ -231,55 +288,77 @@ class TeachingReviewStore:
         corrected_reply: str = "",
         reason: str = "",
     ) -> tuple[bool, str, Dict[str, Any] | None]:
-        reviews = self._load_active()
-        review = reviews.get(str(review_id).strip())
-        if not review:
-            return False, "没有找到这个教学样本，可能已过期。", None
-        candidate_text = ""
-        if selected_index is not None:
-            if selected_index < 1 or selected_index > len(review.get("candidates") or []):
-                return False, f"候选编号应为 1-{len(review.get('candidates') or [])}。", review
-            candidate_text = review["candidates"][selected_index - 1]
-        clean_rating = None
-        if rating is not None:
-            clean_rating = max(1, min(5, int(rating)))
-        entry = {
-            "time": _now_iso(),
-            "actor_id": str(actor_id)[:24],
-            "review_id": review["id"],
-            "action": action[:24],
-            "rating": clean_rating,
-            "selected_index": selected_index,
-            "selected_candidate": candidate_text,
-            "corrected_reply": _clean_text(corrected_reply, 1000),
-            "reason": _clean_text(reason, 500),
-            "source": review.get("source") or {},
-            "message": review.get("message") or "",
-            "recent_dialogue": review.get("recent_dialogue") or [],
-            "candidates": review.get("candidates") or [],
-            "metadata": review.get("metadata") or {},
-        }
-        correction_id = ""
-        correction_error = ""
-        if action == "correct":
-            try:
-                from .style_skill import append_correction_from_feedback
-                if self.corrections_path is not None:
-                    correction = append_correction_from_feedback(entry, path=self.corrections_path)
-                else:
-                    correction = append_correction_from_feedback(entry)
-                if correction:
-                    correction_id = str(correction.get("id") or "")
-                    entry["correction_id"] = correction_id
-            except Exception as e:
-                correction_error = type(e).__name__
-                entry["correction_error"] = correction_error
-        self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.feedback_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
-        review["status"] = "reviewed"
-        reviews[review["id"]] = review
-        self._save_active(reviews)
+        with _path_lock(self.active_path):
+            reviews = self._load_active()
+            review = reviews.get(str(review_id).strip())
+            if not review:
+                return False, "没有找到这个教学样本，可能已过期。", None
+            candidate_text = ""
+            if selected_index is not None:
+                if selected_index < 1 or selected_index > len(review.get("candidates") or []):
+                    return False, f"候选编号应为 1-{len(review.get('candidates') or [])}。", review
+                candidate_text = review["candidates"][selected_index - 1]
+            clean_rating = None
+            if rating is not None:
+                clean_rating = max(1, min(5, int(rating)))
+            raw_entry = {
+                "time": _now_iso(),
+                "actor_id": str(actor_id)[:24],
+                "review_id": review["id"],
+                "action": action[:24],
+                "rating": clean_rating,
+                "selected_index": selected_index,
+                "selected_candidate": candidate_text,
+                "corrected_reply": _clean_text(corrected_reply, 1000),
+                "reason": _clean_text(reason, 500),
+                "source": review.get("source") or {},
+                "message": review.get("message") or "",
+                "recent_dialogue": review.get("recent_dialogue") or [],
+                "candidates": review.get("candidates") or [],
+                "metadata": review.get("metadata") or {},
+            }
+            entry = {
+                "time": raw_entry["time"],
+                "actor_id": raw_entry["actor_id"],
+                "review_id": raw_entry["review_id"],
+                "action": raw_entry["action"],
+                "rating": clean_rating,
+                "selected_index": selected_index,
+                "selected_candidate_ref": _text_ref(candidate_text),
+                "corrected_reply": _clean_text(corrected_reply, 1000),
+                "reason": _clean_text(reason, 500),
+                "source": review.get("source") or {},
+                "message_ref": _text_ref(review.get("message") or ""),
+                "recent_turn_count": len(review.get("recent_dialogue") or []),
+                "candidate_refs": [
+                    _text_ref(candidate)
+                    for candidate in (review.get("candidates") or [])[:8]
+                    if _clean_text(candidate)
+                ],
+                "metadata": review.get("metadata") or {},
+            }
+            correction_id = ""
+            correction_error = ""
+            if action == "correct":
+                try:
+                    from .style_skill import append_correction_from_feedback
+                    if self.corrections_path is not None:
+                        correction = append_correction_from_feedback(raw_entry, path=self.corrections_path)
+                    else:
+                        correction = append_correction_from_feedback(raw_entry)
+                    if correction:
+                        correction_id = str(correction.get("id") or "")
+                        entry["correction_id"] = correction_id
+                except Exception as e:
+                    correction_error = type(e).__name__
+                    entry["correction_error"] = correction_error
+            with _path_lock(self.feedback_path):
+                self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.feedback_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+            review["status"] = "reviewed"
+            reviews[review["id"]] = _redact_review_after_feedback(review)
+            self._save_active(reviews)
         if action == "correct" and correction_id:
             return True, f"已记录教学反馈，并写入纠正层：{correction_id}。", deepcopy(entry)
         if action == "correct":

@@ -1,4 +1,7 @@
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 
 def _configure_stdio():
@@ -9,6 +12,16 @@ def _configure_stdio():
 
 
 _configure_stdio()
+
+
+def _load_project_env():
+    """Load local .env without overriding process-provided environment."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+
+
+_load_project_env()
 
 import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotAdapter

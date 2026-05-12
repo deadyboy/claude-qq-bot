@@ -11,11 +11,16 @@ import os
 import json
 import time
 import hashlib
+import asyncio
+from copy import deepcopy
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import aiofiles
+
+_SESSION_LOCKS: Dict[str, asyncio.Lock] = {}
+_SESSION_LOCKS_GUARD = asyncio.Lock()
 
 # 延迟导入，避免 ImportError
 try:
@@ -112,32 +117,61 @@ class ShortTermMemoryManager:
     def _get_session_file(self, session_id: str) -> Path:
         return self.session_dir / f"{session_id}.json"
 
+    async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        async with _SESSION_LOCKS_GUARD:
+            lock = _SESSION_LOCKS.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                _SESSION_LOCKS[session_id] = lock
+            return lock
+
+    async def _load_session_data(self, session_file: Path) -> Dict[str, Any]:
+        if not session_file.exists():
+            return {"messages": [], "created_at": time.time()}
+        try:
+            async with aiofiles.open(session_file, "r", encoding="utf-8") as f:
+                raw = await f.read()
+            data = json.loads(raw) if raw.strip() else {}
+        except (OSError, json.JSONDecodeError):
+            return {"messages": [], "created_at": time.time()}
+        if not isinstance(data, dict):
+            return {"messages": [], "created_at": time.time()}
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            data["messages"] = []
+        return data
+
+    async def _atomic_save_session_data(self, session_file: Path, data: Dict[str, Any]) -> None:
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = session_file.with_name(
+            f".{session_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
+        )
+        try:
+            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            os.replace(tmp_file, session_file)
+        finally:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except OSError:
+                    pass
+
     async def get_messages(self, session_id: str, limit: int = None) -> List[Dict[str, Any]]:
         """获取会话历史"""
-        # 优先从缓存读取
-        if session_id in self._cache:
-            messages = self._cache[session_id]
-        else:
+        lock = await self._get_session_lock(session_id)
+        async with lock:
             session_file = self._get_session_file(session_id)
-            if not session_file.exists():
+            data = await self._load_session_data(session_file)
+            if time.time() - data.get("last_active", data.get("created_at", 0)) > self.timeout:
+                self._cache.pop(session_id, None)
                 return []
-
-            async with aiofiles.open(session_file, "r", encoding="utf-8") as f:
-                data = json.loads(await f.read())
             messages = data.get("messages", [])
             self._cache[session_id] = messages
 
-        # 检查超时
-        session_file = self._get_session_file(session_id)
-        if session_file.exists():
-            async with aiofiles.open(session_file, "r", encoding="utf-8") as f:
-                data = json.loads(await f.read())
-            if time.time() - data.get("last_active", 0) > self.timeout:
-                return []  # 会话超时
-
-        if limit:
-            return messages[-limit:]
-        return messages
+            if limit:
+                return deepcopy(messages[-limit:])
+            return deepcopy(messages)
 
     async def add_message(
         self,
@@ -147,50 +181,46 @@ class ShortTermMemoryManager:
         metadata: Optional[Dict] = None
     ):
         """添加消息到会话"""
-        session_file = self._get_session_file(session_id)
+        lock = await self._get_session_lock(session_id)
+        async with lock:
+            session_file = self._get_session_file(session_id)
+            session_data = await self._load_session_data(session_file)
 
-        # 加载或创建
-        if session_file.exists():
-            async with aiofiles.open(session_file, "r", encoding="utf-8") as f:
-                session_data = json.loads(await f.read())
-        else:
-            session_data = {"messages": [], "created_at": time.time()}
+            # 添加消息
+            message = {
+                "role": role,
+                "content": content,
+                "timestamp": time.time(),
+                **(metadata or {})
+            }
+            session_data["messages"].append(message)
 
-        # 添加消息
-        message = {
-            "role": role,
-            "content": content,
-            "timestamp": time.time(),
-            **(metadata or {})
-        }
-        session_data["messages"].append(message)
+            # 裁剪到最大长度
+            if len(session_data["messages"]) > self.max_messages:
+                # 保留重要的消息
+                important = [
+                    m for m in session_data["messages"][:len(session_data["messages"])//2]
+                    if m.get("important", False)
+                ]
+                recent = session_data["messages"][-(self.max_messages - len(important)):]
+                session_data["messages"] = important + recent
 
-        # 裁剪到最大长度
-        if len(session_data["messages"]) > self.max_messages:
-            # 保留重要的消息
-            important = [
-                m for m in session_data["messages"][:len(session_data["messages"])//2]
-                if m.get("important", False)
-            ]
-            recent = session_data["messages"][-(self.max_messages - len(important)):]
-            session_data["messages"] = important + recent
+            session_data["last_active"] = time.time()
 
-        session_data["last_active"] = time.time()
+            await self._atomic_save_session_data(session_file, session_data)
 
-        # 保存
-        async with aiofiles.open(session_file, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(session_data, ensure_ascii=False, indent=2))
-
-        # 更新缓存
-        self._cache[session_id] = session_data["messages"]
+            # 更新缓存
+            self._cache[session_id] = session_data["messages"]
 
     async def clear(self, session_id: str):
         """清空会话"""
-        session_file = self._get_session_file(session_id)
-        if session_file.exists():
-            session_file.unlink()
-        if session_id in self._cache:
-            del self._cache[session_id]
+        lock = await self._get_session_lock(session_id)
+        async with lock:
+            session_file = self._get_session_file(session_id)
+            if session_file.exists():
+                session_file.unlink()
+            if session_id in self._cache:
+                del self._cache[session_id]
 
     async def clear_session(self, session_id: str):
         """Compatibility alias for the retired memory.SessionManager API."""
@@ -198,13 +228,17 @@ class ShortTermMemoryManager:
 
     async def mark_important(self, session_id: str, message_index: int):
         """标记重要消息"""
-        messages = await self.get_messages(session_id)
-        if 0 <= message_index < len(messages):
-            messages[message_index]["important"] = True
+        lock = await self._get_session_lock(session_id)
+        async with lock:
             session_file = self._get_session_file(session_id)
-            async with aiofiles.open(session_file, "w", encoding="utf-8") as f:
-                data = {"messages": messages, "last_active": time.time()}
-                await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            data = await self._load_session_data(session_file)
+            messages = data.get("messages", [])
+            if 0 <= message_index < len(messages):
+                messages[message_index]["important"] = True
+                data["messages"] = messages
+                data["last_active"] = time.time()
+                await self._atomic_save_session_data(session_file, data)
+                self._cache[session_id] = messages
 
 # ==================== 长期记忆管理器 (ChromaDB) ====================
 
@@ -224,6 +258,7 @@ class LongTermMemoryManager:
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self._collection = None
         self._initialized = False
+        self._simple_lock = asyncio.Lock()
 
     async def _ensure_initialized(self):
         """懒加载 ChromaDB"""
@@ -340,22 +375,39 @@ class LongTermMemoryManager:
         """降级模式：JSON 文件存储"""
         index_file = self.persist_dir / "memory_index.json"
 
-        if index_file.exists():
-            async with aiofiles.open(index_file, "r", encoding="utf-8") as f:
-                index = json.loads(await f.read())
-        else:
-            index = {"memories": {}}
+        async with self._simple_lock:
+            if index_file.exists():
+                try:
+                    async with aiofiles.open(index_file, "r", encoding="utf-8") as f:
+                        raw = await f.read()
+                    index = json.loads(raw) if raw.strip() else {"memories": {}}
+                except (OSError, json.JSONDecodeError):
+                    index = {"memories": {}}
+            else:
+                index = {"memories": {}}
 
-        index["memories"][memory_id] = {
-            "content": content,
-            "memory_type": memory_type,
-            "tags": tags or [],
-            "created_at": time.time(),
-            **(metadata or {})
-        }
+            index["memories"][memory_id] = {
+                "content": content,
+                "memory_type": memory_type,
+                "tags": tags or [],
+                "created_at": time.time(),
+                **(metadata or {})
+            }
 
-        async with aiofiles.open(index_file, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(index, ensure_ascii=False, indent=2))
+            index_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp_file = index_file.with_name(
+                f".{index_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
+            )
+            try:
+                async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
+                    await f.write(json.dumps(index, ensure_ascii=False, indent=2))
+                os.replace(tmp_file, index_file)
+            finally:
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink()
+                    except OSError:
+                        pass
 
     async def _search_simple(
         self,
@@ -369,8 +421,13 @@ class LongTermMemoryManager:
         if not index_file.exists():
             return []
 
-        async with aiofiles.open(index_file, "r", encoding="utf-8") as f:
-            index = json.loads(await f.read())
+        async with self._simple_lock:
+            try:
+                async with aiofiles.open(index_file, "r", encoding="utf-8") as f:
+                    raw = await f.read()
+                index = json.loads(raw) if raw.strip() else {"memories": {}}
+            except (OSError, json.JSONDecodeError):
+                return []
 
         # 简单关键词匹配
         query_words = set(query.lower().split())
@@ -476,21 +533,36 @@ class KeyFactManager:
         fact_type: str = "fact",
         subject: str = "",
         confidence: float = 1.0,
-        metadata: Dict = None
+        metadata: Dict = None,
+        verified: bool = False,
     ) -> str:
         """添加关键事实"""
         await self._ensure_conn()
 
         fact_id = hashlib.md5(f"{subject}:{predicate}:{object}".encode()).hexdigest()[:16]
         now = time.time()
+        verified_int = 1 if verified else 0
 
         await self._conn.execute("""
-            INSERT OR REPLACE INTO key_facts
+            INSERT INTO key_facts
             (id, fact_type, subject, predicate, object, confidence, verified, created_at, updated_at, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                fact_type = excluded.fact_type,
+                subject = excluded.subject,
+                predicate = excluded.predicate,
+                object = excluded.object,
+                confidence = excluded.confidence,
+                verified = CASE
+                    WHEN key_facts.verified = 1 OR excluded.verified = 1 THEN 1
+                    ELSE 0
+                END,
+                created_at = key_facts.created_at,
+                updated_at = excluded.updated_at,
+                metadata = excluded.metadata
         """, (
             fact_id, fact_type, subject, predicate, object,
-            confidence, 0, now, now, json.dumps(metadata or {})
+            confidence, verified_int, now, now, json.dumps(metadata or {})
         ))
         await self._conn.commit()
 
@@ -843,7 +915,8 @@ class UnifiedMemoryManager:
             fact_type="user_profile",
             subject=user_id,
             confidence=confidence,
-            metadata=metadata
+            metadata=metadata,
+            verified=verified,
         )
 
         if verified:

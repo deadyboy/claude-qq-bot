@@ -3,7 +3,7 @@
 from ..dialogue import *
 
 
-permission_cmd = on_message(rule=is_permission_command, priority=4, block=True)
+permission_cmd = on_message(rule=targeted_command_rule(is_permission_command), priority=4, block=True)
 
 
 @permission_cmd.handle()
@@ -20,7 +20,7 @@ async def handle_permission(
     await send_qq_text(bot, event, format_permission_status(event.user_id, group_id))
 
 
-confirm_cmd = on_message(rule=is_confirm_command, priority=4, block=True)
+confirm_cmd = on_message(rule=targeted_command_rule(is_confirm_command), priority=4, block=True)
 
 
 @confirm_cmd.handle()
@@ -36,15 +36,16 @@ async def handle_confirm_action(
         return
 
     action_id = parse_confirm_payload(get_plain_text(event))
+    chat_scope = get_confirmation_scope(event)
     if not action_id:
         await send_qq_text(
             bot,
             event,
-            format_pending_actions(confirmation_store.list_for_actor(event.user_id)),
+            format_pending_actions(confirmation_store.list_for_actor(event.user_id, chat_scope=chat_scope)),
         )
         return
 
-    action, error = confirmation_store.pop_for_actor(action_id, event.user_id)
+    action, error = confirmation_store.pop_for_actor(action_id, event.user_id, chat_scope=chat_scope)
     if not action:
         await send_qq_text(bot, event, error)
         return
@@ -59,7 +60,7 @@ async def handle_confirm_action(
         await send_qq_text(bot, event, f"执行失败：{type(e).__name__}")
 
 
-cancel_cmd = on_message(rule=is_cancel_command, priority=4, block=True)
+cancel_cmd = on_message(rule=targeted_command_rule(is_cancel_command), priority=4, block=True)
 
 
 @cancel_cmd.handle()
@@ -75,19 +76,20 @@ async def handle_cancel_action(
         return
 
     action_id = parse_cancel_payload(get_plain_text(event))
+    chat_scope = get_confirmation_scope(event)
     if not action_id:
         await send_qq_text(
             bot,
             event,
-            format_pending_actions(confirmation_store.list_for_actor(event.user_id)),
+            format_pending_actions(confirmation_store.list_for_actor(event.user_id, chat_scope=chat_scope)),
         )
         return
 
-    _, msg = confirmation_store.cancel_for_actor(action_id, event.user_id)
+    _, msg = confirmation_store.cancel_for_actor(action_id, event.user_id, chat_scope=chat_scope)
     await send_qq_text(bot, event, msg)
 
 
-access_cmd = on_message(rule=is_access_command, priority=4, block=True)
+access_cmd = on_message(rule=targeted_command_rule(is_access_command), priority=4, block=True)
 
 
 @access_cmd.handle()

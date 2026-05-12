@@ -26,12 +26,18 @@ pip install -e .
 - **Lagrange.Core**: https://github.com/LagrangeDev/Lagrange.Core
 - **NapCat**: https://napcat.dev
 
-在 `onebot_config.json` 中启用 WebSocket:
+当前 `bot.py` 启动的是 NoneBot 反向 WebSocket 服务，监听：
+
+```text
+ws://127.0.0.1:8081/onebot/v11/ws
+```
+
+在 NapCat/Lagrange 中启用反向 WebSocket，并连接到上面的地址。示例：
 ```json
 {
   "network": {
     "websocket_client": {
-      "url": "ws://127.0.0.1:8080/onebot/v11/ws"
+      "url": "ws://127.0.0.1:8081/onebot/v11/ws"
     }
   }
 }
@@ -41,23 +47,29 @@ pip install -e .
 
 编辑 `.env` 文件：
 ```env
-ONEBOT_WS_URL=ws://127.0.0.1:6700
+HOST=127.0.0.1
+PORT=8081
+ONEBOT_WS_URL=ws://127.0.0.1:8081/onebot/v11/ws
 LLM_API_BASE=https://api.llm.ustc.edu.cn/v1
-LLM_API_KEY=sk-xxxxx
+LLM_API_KEY=REPLACE_WITH_REAL_LLM_API_KEY
 LLM_MODEL=deepseek-v4-pro
 LLM_VISION_MODEL=qwen-chat
 # 可选：图片模型与文字模型不在同一接口时单独配置
 # LLM_VISION_API_BASE=https://api.llm.ustc.edu.cn/v1
-# LLM_VISION_API_KEY=sk-xxxxx
+# LLM_VISION_API_KEY=REPLACE_WITH_REAL_VISION_API_KEY
 ```
 
 收到图片时会优先调用 `LLM_VISION_MODEL`；如果该模型或接口暂时不支持图片，会回退到文字模型并让对方补充文字描述，避免直接报 API 调用失败。
 
+`.env` 只作为本地默认配置加载，不会覆盖启动进程中已经设置的环境变量。
+
 ### 4. 启动机器人
 
 ```bash
-nb run
+python -u bot.py
 ```
+
+`nb run` 不是默认启动方式；只有你额外安装并维护 `nb-cli` 时才需要使用它。
 
 ## 命令列表
 
@@ -66,7 +78,7 @@ nb run
 | @机器人 + 消息 | 与机器人对话 |
 | /clear | 清空对话历史 |
 | /model | 查看当前模型 |
-| /model &lt;模型名&gt; | 切换模型（如 /model deepseek-v4-flash） |
+| /model &lt;模型名&gt; | 切换模型（跨供应商时会提示 key/base 兼容性） |
 
 ## 项目结构
 

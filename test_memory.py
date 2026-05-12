@@ -7,11 +7,33 @@
 """
 
 import asyncio
+import atexit
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 # 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent))
+PROJECT_ROOT = Path(__file__).parent.resolve()
+sys.path.insert(0, str(PROJECT_ROOT))
+_ORIGINAL_CWD = Path.cwd()
+_TEST_WORKDIR = tempfile.TemporaryDirectory(
+    prefix="claude_qq_bot_test_memory_",
+    ignore_cleanup_errors=True,
+)
+
+
+def _cleanup_test_workdir() -> None:
+    os.chdir(_ORIGINAL_CWD)
+    try:
+        _TEST_WORKDIR.cleanup()
+    except PermissionError:
+        # Chroma can briefly keep sqlite/bin files open on Windows after tests pass.
+        pass
+
+
+atexit.register(_cleanup_test_workdir)
+os.chdir(_TEST_WORKDIR.name)
 
 from src.plugins.claude.memory_core import (
     ShortTermMemoryManager,
@@ -64,7 +86,7 @@ async def test_long_term_memory():
     print("测试长期记忆管理器")
     print("=" * 50)
 
-    manager = LongTermMemoryManager()
+    manager = LongTermMemoryManager("data/longterm_memory")
 
     try:
         # 添加记忆
@@ -114,7 +136,7 @@ async def test_key_facts():
     print("测试关键事实管理器")
     print("=" * 50)
 
-    manager = KeyFactManager()
+    manager = KeyFactManager("data/key_facts.db")
 
     # 添加事实
     print("\n1. 添加用户事实...")
@@ -180,6 +202,9 @@ async def test_unified_memory():
     print("=" * 50)
 
     manager = UnifiedMemoryManager()
+    manager.short_term = ShortTermMemoryManager(max_messages=50, timeout=7200)
+    manager.long_term = LongTermMemoryManager("data/unified_longterm_memory")
+    manager.key_facts = KeyFactManager("data/unified_key_facts.db")
 
     # 初始化
     print("\n1. 初始化所有记忆系统...")

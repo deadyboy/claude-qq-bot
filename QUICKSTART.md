@@ -44,7 +44,7 @@ ws://127.0.0.1:8081/onebot/v11/ws
 
 ```bash
 cd F:\ClaudeSpace2\claude-qq-bot
-python bot.py
+python -u bot.py
 ```
 
 或直接运行 `run.bat`。
@@ -66,7 +66,7 @@ python bot.py
 | @机器人 你好 | 与 AI 对话 |
 | /clear | 清空对话历史 |
 | /model | 查看当前模型 |
-| /model deepseek-v4-pro | 切换模型 |
+| /model deepseek-v4-pro | 切换模型，并显示文字/图片 base 与 key 状态 |
 
 ---
 

@@ -27,7 +27,7 @@ def format_qce_distillation_result(result: Dict[str, Any]) -> str:
         f"- 关系/场景画像：{result.get('relationship_profiles', 0)} 个",
         f"- 场景画像：{result.get('scene_profiles', 0)} 个",
         f"- 数据就绪度：{result.get('readiness')}",
-        "- 原文策略：summary/sample_index 只存元数据；turns/dialogue_pairs/phrase_profile/rag_pool/sft_candidates/rerank_rules 是本地训练产物",
+        "- 原文策略：命令报告不展示聊天正文；summary/sample_index 只存元数据；turns/dialogue_pairs/phrase_profile/rag_pool/sft_candidates/rerank_rules 是本地 local raw 训练产物",
         f"- 输出目录：{result.get('output_dir')}",
     ]
     if applied:

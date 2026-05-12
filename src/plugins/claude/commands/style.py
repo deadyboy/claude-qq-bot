@@ -4,7 +4,7 @@ from ..dialogue import *
 from ..dialogue import _is_switch_off, _is_switch_on
 
 
-style_draft_cmd = on_message(rule=is_style_draft_command, priority=4, block=True)
+style_draft_cmd = on_message(rule=targeted_command_rule(is_style_draft_command), priority=4, block=True)
 
 
 @style_draft_cmd.handle()
@@ -61,7 +61,7 @@ async def handle_style_draft(
         await send_qq_text(bot, event, f"风格草稿生成失败：{type(e).__name__}")
 
 
-style_cmd = on_message(rule=is_style_command, priority=4, block=True)
+style_cmd = on_message(rule=targeted_command_rule(is_style_command), priority=4, block=True)
 
 
 @style_cmd.handle()
@@ -132,7 +132,7 @@ async def handle_style_command(
         await send_qq_text(
             bot,
             event,
-            "开始 Stage 5B 离线蒸馏。只会写入统计摘要和样本索引，不保存聊天正文；数据量大时可能需要较久。",
+            "开始 Stage 5B 离线蒸馏。公开报告只显示统计摘要和样本索引；会在本地运行目录生成 local raw 训练产物用于检索/评估，不会在命令结果里展示聊天正文。",
         )
         try:
             result = await asyncio.to_thread(run_qce_style_distillation, payload or None)

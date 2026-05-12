@@ -16,10 +16,11 @@ echo [OK] Python 已找到
 
 echo.
 echo [2/2] 启动机器人...
+echo 监听反向 WebSocket: ws://127.0.0.1:8081/onebot/v11/ws
 echo 按 Ctrl+C 停止机器人
 echo.
 
 cd /d "%~dp0"
-python bot.py
+python -u bot.py
 
 pause

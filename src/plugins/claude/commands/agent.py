@@ -20,7 +20,7 @@ from ..controlled_agent import (
 )
 
 
-agent_cmd = on_message(rule=is_agent_command, priority=4, block=True)
+agent_cmd = on_message(rule=targeted_command_rule(is_agent_command), priority=4, block=True)
 
 
 def _agent_context(event: MessageEvent) -> ControlledAgentContext:
@@ -160,6 +160,16 @@ async def handle_controlled_agent(
             status_lines=_agent_status_lines(),
             session_clearer=chat_session_manager.clear_session,
         )
+        if results and not all(result.ok for result in results):
+            confirmation_store.log(
+                {"id": draft_id, "type": "controlled_agent_plan", "summary": f"执行受控 Agent 计划 {draft_id}"},
+                actor_id=event.user_id,
+                status=results[0].status,
+                result=serialize_execution_results(results),
+            )
+            await send_qq_text(bot, event, format_plan_execution_results(draft_id, results))
+            return
+
         if needs_confirmation:
             await send_qq_text(
                 bot,
@@ -207,4 +217,3 @@ async def handle_controlled_agent(
         return
 
     await send_qq_text(bot, event, format_controlled_agent_help())
-

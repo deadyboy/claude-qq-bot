@@ -120,6 +120,56 @@ def _message_hint(text: str) -> str:
     return ",".join(labels[:4]) or f"len_{min(200, len(compact))}"
 
 
+def _candidate_hint(text: str) -> str:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    labels = []
+    lowered = str(text or "").lower()
+    if any(token in compact for token in ("我是AI", "作为AI", "人工智能", "机器人", "助手")) or "as an ai" in lowered:
+        labels.append("ai_assistant_flavor")
+    if re.search(r"(^|\n)\s*(?:#{1,4}\s|[-*]\s+|\d+[.)、]\s+)", str(text or "")):
+        labels.append("structured_answer")
+    if any(token in compact for token in ("很高兴为您", "希望对你有帮助", "以下是", "建议您")):
+        labels.append("service_tone")
+    if any(token in compact for token in ("密码", "验证码", "转账", "借钱", "账号", "登录")):
+        labels.append("credential_or_finance")
+    return ",".join(labels[:4]) or f"len_{min(200, len(compact))}"
+
+
+def _bad_candidate_ref(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        existing_hash = str(value.get("hash") or value.get("text_hash") or "").strip()[:24]
+        if existing_hash:
+            return {
+                "hash": existing_hash,
+                "hint": str(value.get("hint") or value.get("message_hint") or "unknown")[:80],
+                "length": int(value.get("length") or 0),
+            }
+        value = value.get("text") or value.get("candidate") or ""
+    text = _clean_text(value, 220)
+    if not text:
+        return None
+    return {
+        "hash": _sha1_short(text),
+        "hint": _candidate_hint(text),
+        "length": len(text),
+    }
+
+
+def _bad_candidate_refs(values: Any) -> List[Dict[str, Any]]:
+    refs = []
+    seen = set()
+    for value in (values or [])[:8]:
+        ref = _bad_candidate_ref(value)
+        if not ref:
+            continue
+        key = str(ref.get("hash") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        refs.append(ref)
+    return refs
+
+
 def _term_similarity(left_terms: Sequence[str], right_terms: Sequence[str]) -> float:
     left_set = {str(item) for item in left_terms if str(item).strip()}
     right_set = {str(item) for item in right_terms if str(item).strip()}
@@ -173,11 +223,9 @@ def _normalize_correction(raw: Dict[str, Any]) -> Dict[str, Any] | None:
         "recent_turn_count": int(raw.get("recent_turn_count") or len([
             item for item in (raw.get("recent_dialogue") or []) if isinstance(item, dict)
         ])),
-        "bad_candidates": [
-            _clean_text(item, 220)
-            for item in (raw.get("bad_candidates") or raw.get("candidates") or [])[:8]
-            if _clean_text(item, 220)
-        ],
+        "bad_candidate_refs": _bad_candidate_refs(
+            raw.get("bad_candidate_refs") or raw.get("bad_candidates") or raw.get("candidates") or []
+        ),
         "corrected_reply": corrected_reply,
         "reason": _clean_text(raw.get("reason"), 240),
         "metadata": metadata,
@@ -252,11 +300,7 @@ def append_correction_from_feedback(
         "recent_turn_count": len([
             item for item in (feedback.get("recent_dialogue") or []) if isinstance(item, dict)
         ]),
-        "bad_candidates": [
-            _clean_text(item, 220)
-            for item in (feedback.get("candidates") or [])[:8]
-            if _clean_text(item, 220)
-        ],
+        "bad_candidate_refs": _bad_candidate_refs(feedback.get("candidates") or []),
         "corrected_reply": corrected,
         "reason": _clean_text(feedback.get("reason"), 240),
         "metadata": metadata,
@@ -352,6 +396,83 @@ def select_relevant_corrections(
     return ranked[: max(0, min(8, int(limit)))]
 
 
+def _relationship_profile_paths(root_path: Path, target: str, chat_type: str) -> List[Path]:
+    clean_target = re.sub(r"[^\w.-]+", "_", str(target or "").strip())
+    numeric_target = "".join(re.findall(r"\d+", str(target or "")))
+    names = [
+        target,
+        clean_target,
+        numeric_target,
+        f"{chat_type}_{target}" if chat_type else "",
+        f"{chat_type}_{clean_target}" if chat_type and clean_target else "",
+        f"{target}_{chat_type}" if chat_type else "",
+        _sha1_short(str(target or "")),
+    ]
+    paths = []
+    seen = set()
+    for name in names:
+        safe = str(name or "").strip()
+        if not safe or safe in seen:
+            continue
+        seen.add(safe)
+        paths.append(root_path / "relationship_profiles" / f"{safe}.md")
+    return paths
+
+
+def _stage5b_relationship_profile_text(
+    target: str,
+    *,
+    chat_type: str,
+) -> tuple[str, str, Dict[str, Any]]:
+    if not target:
+        return "", "", {"matched": False}
+    try:
+        from .style.distill.reports import _load_json, find_latest_distill_run
+        from .style.distill.retrieval import find_source_for_target
+
+        run_path = find_latest_distill_run()
+        if run_path is None:
+            return "", "", {"matched": False}
+        mapping = find_source_for_target(target, chat_type=chat_type or None, run_dir=run_path)
+        if not mapping.get("matched"):
+            return "", "", mapping
+        relationship_path = run_path / "relationship_profiles.json"
+        if not relationship_path.exists():
+            return "", "", mapping
+        data = _load_json(relationship_path)
+        source_file_id = str(mapping.get("source_file_id") or "")
+        profile = next(
+            (
+                item for item in (data.get("profiles") or [])
+                if isinstance(item, dict) and str(item.get("source_file_id") or "") == source_file_id
+            ),
+            None,
+        )
+        if not profile:
+            return "", "", mapping
+        labels = "、".join(str(item) for item in (profile.get("labels") or [])[:6])
+        length_buckets = ", ".join(
+            f"{key}:{value}" for key, value in list((profile.get("length_buckets") or {}).items())[:5]
+        )
+        element_types = ", ".join(
+            f"{key}:{value}" for key, value in list((profile.get("element_types") or {}).items())[:5]
+        )
+        lines = [
+            "Stage 5B 关系画像摘要：",
+            f"- 来源类型：{profile.get('chat_type') or mapping.get('chat_type') or chat_type or 'unknown'}",
+            f"- 主人文本数：{profile.get('owner_text_messages') or 0}",
+            f"- 候选样本数：{profile.get('candidate_samples') or 0}",
+            f"- 平均/中位长度：{profile.get('avg_length') or 0}/{profile.get('median_length') or 0}",
+            f"- 标签：{labels or 'none'}",
+            f"- 长度桶：{length_buckets or 'none'}",
+            f"- 消息元素：{element_types or 'none'}",
+            "- 原文策略：此画像来自聚合统计，不含联系人名称、QQ 号或聊天正文。",
+        ]
+        return "\n".join(lines), str(relationship_path), mapping
+    except Exception as e:
+        return "", "", {"matched": False, "error": type(e).__name__}
+
+
 def load_style_skill_context(
     *,
     chat_type: str | None = None,
@@ -363,13 +484,24 @@ def load_style_skill_context(
     """Load bounded runtime 36.skill context for owner-style generation."""
     root_path = Path(root)
     target = str(target_id or "").strip()
+    chat = str(chat_type or "").strip()
     relationship_text = ""
     relationship_path = None
+    relationship_mapping: Dict[str, Any] = {"matched": False}
     if target:
-        candidate = root_path / "relationship_profiles" / f"{target}.md"
-        if candidate.exists():
-            relationship_path = candidate
-            relationship_text = _read_md(candidate, MAX_RELATIONSHIP_CHARS)
+        for candidate in _relationship_profile_paths(root_path, target, chat):
+            if candidate.exists():
+                relationship_path = candidate
+                relationship_text = _read_md(candidate, MAX_RELATIONSHIP_CHARS)
+                relationship_mapping = {"matched": True, "source": "36_skill_file"}
+                break
+        if not relationship_text:
+            relationship_text, stage5b_path, relationship_mapping = _stage5b_relationship_profile_text(
+                target,
+                chat_type=chat,
+            )
+            if stage5b_path:
+                relationship_path = Path(stage5b_path)
     corrections = select_relevant_corrections(
         latest_message,
         chat_type=chat_type,
@@ -381,7 +513,7 @@ def load_style_skill_context(
         "ok": True,
         "enabled": root_path.exists(),
         "root": str(root_path),
-        "chat_type": str(chat_type or ""),
+        "chat_type": chat,
         "target_id": target,
         "scene_label": str(scene_label or ""),
         "global_persona": _read_md(root_path / "global_persona.md", MAX_MD_CHARS),
@@ -390,6 +522,7 @@ def load_style_skill_context(
         "relationship_profile": relationship_text,
         "relationship_profile_path": str(relationship_path) if relationship_path else "",
         "relationship_profile_found": bool(relationship_text),
+        "relationship_mapping": relationship_mapping,
         "corrections": corrections,
         "correction_hit_count": len(corrections),
     }
@@ -411,11 +544,16 @@ def format_style_skill_context_for_prompt(context: Dict[str, Any] | None) -> str
     if corrections:
         lines.append("主人已纠正过的类似场景：")
         for item in corrections[:MAX_CORRECTIONS_IN_PROMPT]:
+            bad_refs = [
+                f"{ref.get('hash')}:{ref.get('hint')}"
+                for ref in (item.get("bad_candidate_refs") or [])[:3]
+                if isinstance(ref, dict)
+            ]
             lines.append(
                 f"- 触发摘要：{item.get('message_hint') or 'unknown'}; "
                 f"匹配词：{'/'.join(item.get('message_terms') or []) or 'none'}; "
                 f"应这样回：{item.get('corrected_reply')}; "
-                f"不要重复坏候选：{' / '.join((item.get('bad_candidates') or [])[:3])}"
+                f"坏候选摘要：{'; '.join(bad_refs) or 'none'}"
             )
     lines.append("36.skill 优先级：硬安全规则 > 主人纠正 > 当前关系画像 > 相似历史样本 > 全局口癖。")
     return "\n".join(line for line in lines if str(line).strip())
@@ -455,13 +593,14 @@ def candidate_correction_delta(text: str, corrections: Sequence[Dict[str, Any]])
     reasons: List[str] = []
     for item in corrections[:MAX_CORRECTIONS_IN_PROMPT]:
         corrected = str(item.get("corrected_reply") or "")
-        bad_candidates = item.get("bad_candidates") or []
+        bad_refs = item.get("bad_candidate_refs") or []
         good_sim = _text_similarity(text, corrected)
-        bad_sim = max((_text_similarity(text, bad) for bad in bad_candidates), default=0.0)
+        text_hash = _sha1_short(_clean_text(text, 220))
+        bad_hash_match = any(str(ref.get("hash") or "") == text_hash for ref in bad_refs if isinstance(ref, dict))
         if good_sim >= 0.45:
             delta += 18
             reasons.append("matches_correction")
-        if bad_sim >= 0.45:
-            delta -= 30
+        if bad_hash_match:
+            delta -= 80
             reasons.append("matches_rejected_candidate")
     return delta, reasons

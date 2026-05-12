@@ -3,7 +3,7 @@
 from ..dialogue import *
 
 
-clear_cmd = on_message(rule=is_clear_command, priority=4, block=True)
+clear_cmd = on_message(rule=targeted_command_rule(is_clear_command), priority=4, block=True)
 
 
 @clear_cmd.handle()
@@ -37,7 +37,7 @@ async def handle_clear(
     await send_qq_text(bot, event, "会话历史已清空")
 
 
-model_cmd = on_message(rule=is_model_command, priority=4, block=True)
+model_cmd = on_message(rule=targeted_command_rule(is_model_command), priority=4, block=True)
 
 
 @model_cmd.handle()
@@ -61,13 +61,17 @@ async def handle_model_switch(
         api_base = model_config.get_current_api_base()
         vision_api_base = model_config.get_current_vision_api_base()
         available = ", ".join(model_config.list_models())
+        notes = model_config.get_compatibility_notes()
+        notes_text = "\n".join(notes) + "\n" if notes else ""
         msg = (
             f"当前模型：{current}\n"
             f"图片模型：{vision}\n"
-            f"API Base：{api_base}\n"
-            f"图片 API Base：{vision_api_base}\n"
+            f"API Base：{api_base}（{model_config.get_api_provider()}）\n"
+            f"API Key：{model_config.get_api_key_state()}\n"
+            f"图片 API Base：{vision_api_base}（{model_config.get_vision_api_provider()}）\n"
+            f"图片 API Key：{model_config.get_vision_api_key_state()}\n"
             f"可用模型：{available}\n"
-            "用法：/model <模型名>"
+            f"{notes_text}用法：/model <模型名>"
         )
         await send_qq_text(bot, event, msg)
         return
@@ -84,7 +88,7 @@ async def handle_model_switch(
 
 # ========== 状态与低风险工具 ==========
 
-status_cmd = on_message(rule=is_status_command, priority=4, block=True)
+status_cmd = on_message(rule=targeted_command_rule(is_status_command), priority=4, block=True)
 
 
 @status_cmd.handle()
@@ -109,8 +113,10 @@ async def handle_basic_status(
         "- 模式：普通聊天 + 记忆 + 教学审核",
         f"- 模型：{model_config.get_current_model()}",
         f"- 图片模型：{model_config.get_current_vision_model()}",
-        f"- API Base：{model_config.get_current_api_base()}",
-        f"- 图片 API Base：{model_config.get_current_vision_api_base()}",
+        f"- API Base：{model_config.get_current_api_base()}（{model_config.get_api_provider()}）",
+        f"- API Key：{model_config.get_api_key_state()}",
+        f"- 图片 API Base：{model_config.get_current_vision_api_base()}（{model_config.get_vision_api_provider()}）",
+        f"- 图片 API Key：{model_config.get_vision_api_key_state()}",
         f"- 自动记忆：{'开' if is_auto_memory_enabled() else '关'}",
         "- 自动代聊发送：已退役",
         f"- 教学影子审核：{'开' if is_style_teaching_enabled() else '关'}",
@@ -122,7 +128,7 @@ async def handle_basic_status(
     await send_qq_text(bot, event, msg)
 
 
-tools_cmd = on_message(rule=is_tools_command, priority=4, block=True)
+tools_cmd = on_message(rule=targeted_command_rule(is_tools_command), priority=4, block=True)
 
 
 @tools_cmd.handle()
@@ -144,7 +150,7 @@ async def handle_tools(
         ),
     )
 
-help_cmd = on_message(rule=is_help_command, priority=4, block=True)
+help_cmd = on_message(rule=targeted_command_rule(is_help_command), priority=4, block=True)
 
 
 @help_cmd.handle()
@@ -181,7 +187,7 @@ async def handle_help_basic(
     ])
     await send_qq_text(bot, event, msg)
 
-persona_cmd = on_message(rule=is_persona_command, priority=4, block=True)
+persona_cmd = on_message(rule=targeted_command_rule(is_persona_command), priority=4, block=True)
 
 
 @persona_cmd.handle()
